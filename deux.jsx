@@ -79,24 +79,30 @@ function checkAnswer(expected, given) {
    Returns target tokens flagged hit/miss, extra tokens the user added,
    and an accuracy percentage. Used by the dictation pass. */
 function wordDiff(target, attempt) {
-  const T = tokenize(target), A = tokenize(attempt);
-  const tn = T.map(norm), an = A.map(norm);
-  const m = T.length, n = A.length;
+  // Display tokens keep their original punctuation; matching runs on the
+  // normalized forms. Punctuation-only tokens render neutral (hit).
+  const rawWords = (target || "").replace(/[’‘]/g, "'").split(/\s+/).filter(Boolean);
+  const pairs = rawWords.map((raw) => ({ raw, clean: norm(raw) }));
+  const tn = pairs.filter((p) => p.clean).map((p) => p.clean);
+  const A = tokenize(attempt).map(norm).filter(Boolean);
+  const m = tn.length, n = A.length;
   const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
   for (let i = m - 1; i >= 0; i--)
     for (let j = n - 1; j >= 0; j--)
-      dp[i][j] = tn[i] === an[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const targetTokens = []; const extras = [];
+      dp[i][j] = tn[i] === A[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const hits = new Array(m).fill(false);
+  const extras = [];
   let i = 0, j = 0;
   while (i < m && j < n) {
-    if (tn[i] === an[j]) { targetTokens.push({ w: T[i], hit: true }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { targetTokens.push({ w: T[i], hit: false }); i++; }
+    if (tn[i] === A[j]) { hits[i] = true; i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
     else { extras.push(A[j]); j++; }
   }
-  while (i < m) { targetTokens.push({ w: T[i], hit: false }); i++; }
   while (j < n) { extras.push(A[j]); j++; }
-  const hits = targetTokens.filter((t) => t.hit).length;
-  const acc = m ? Math.round((hits / m) * 100) : 0;
+  let k = 0;
+  const targetTokens = pairs.map((p) => (p.clean ? { w: p.raw, hit: hits[k++] } : { w: p.raw, hit: true }));
+  const hitCount = hits.filter(Boolean).length;
+  const acc = m ? Math.round((hitCount / m) * 100) : 0;
   return { targetTokens, extras, acc };
 }
 
@@ -139,6 +145,11 @@ function chunkText(text) {
   for (const p of parts) {
     if (out.length && tokenize(p).length <= 2) out[out.length - 1] += " " + p;
     else out.push(p);
+  }
+  // a tiny leading fragment ("Ce matin,") merges forward instead of standing alone
+  if (out.length > 1 && tokenize(out[0]).length <= 2) {
+    out[1] = out[0] + " " + out[1];
+    out.shift();
   }
   return out;
 }
@@ -1037,8 +1048,8 @@ function nextAction(u) {
 /* ========================================================================== */
 
 const THEME = {
-  amber: { grad: "from-amber-400 to-rose-400", soft: "bg-amber-50", ring: "ring-amber-300", text: "text-amber-700", btn: "bg-amber-500 hover:bg-amber-600 active:bg-amber-700", chip: "bg-amber-100 text-amber-800", bar: "bg-amber-500" },
-  indigo: { grad: "from-indigo-500 to-sky-500", soft: "bg-indigo-50", ring: "ring-indigo-300", text: "text-indigo-700", btn: "bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800", chip: "bg-indigo-100 text-indigo-800", bar: "bg-indigo-500" },
+  amber: { grad: "from-amber-400 to-rose-400", soft: "bg-amber-50", ring: "ring-amber-300", text: "text-amber-700", btn: "bg-amber-500 hover:bg-amber-600 active:bg-amber-700", chip: "bg-amber-100 text-amber-800", bar: "bg-amber-500", accentL: "border-l-4 border-l-amber-400", edge: "border-amber-200", numChip: "bg-amber-100 text-amber-700" },
+  indigo: { grad: "from-indigo-500 to-sky-500", soft: "bg-indigo-50", ring: "ring-indigo-300", text: "text-indigo-700", btn: "bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800", chip: "bg-indigo-100 text-indigo-800", bar: "bg-indigo-500", accentL: "border-l-4 border-l-indigo-400", edge: "border-indigo-200", numChip: "bg-indigo-100 text-indigo-700" },
 };
 const themeOf = (u) => THEME[u?.theme] || THEME.indigo;
 
@@ -1145,10 +1156,10 @@ function TopBar({ u, go, view, onSwitch }) {
           <button onClick={() => go("home")} className="text-sm text-stone-500 hover:text-stone-800 min-h-11 px-2">← Home</button>
         )}
         <div className="flex-1" />
-        <Chip tone={streak > 0 ? "amber" : "stone"}>🔥 {streak}</Chip>
-        <button onClick={() => go("dashboard")} className="min-h-11 min-w-11 rounded-full hover:bg-stone-200 text-lg" title="Progress">📊</button>
-        <button onClick={() => go("settings")} className="min-h-11 min-w-11 rounded-full hover:bg-stone-200 text-lg" title="Settings">⚙️</button>
-        <button onClick={onSwitch} className={`min-h-11 px-3 rounded-full ${t.chip} font-semibold text-sm`} title="Switch user">
+        {streak > 0 && <Chip tone="amber">🔥 {streak}</Chip>}
+        <button onClick={() => go("dashboard")} className="min-h-11 min-w-11 rounded-full hover:bg-stone-200 text-lg" title="Progress" aria-label="Progress dashboard">📊</button>
+        <button onClick={() => go("settings")} className="min-h-11 min-w-11 rounded-full hover:bg-stone-200 text-lg" title="Settings" aria-label="Settings">⚙️</button>
+        <button onClick={onSwitch} className={`min-h-11 px-3 rounded-full ${t.chip} font-semibold text-sm max-w-32 truncate`} title="Switch user" aria-label={`Switch user (current: ${u.name})`}>
           {u.emoji} {u.name}
         </button>
       </div>
@@ -1158,6 +1169,20 @@ function TopBar({ u, go, view, onSwitch }) {
 
 function Screen({ children }) {
   return <div className="max-w-2xl mx-auto px-4 py-5 pb-24">{children}</div>;
+}
+
+/* Intentional type treatment + view-transition keyframes, shared by every
+   top-level render path. No network fonts — platform stacks only. */
+function DeuxStyles() {
+  return (
+    <style>{`
+      .font-serif { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "New York", Georgia, serif; letter-spacing: -0.01em; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+      @keyframes deuxfade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+      .view-fade { animation: deuxfade 0.18s ease-out both; }
+      @media (prefers-reduced-motion: reduce) { .view-fade { animation: none; } }
+    `}</style>
+  );
 }
 
 /* ========================================================================== */
@@ -1203,10 +1228,10 @@ function ProfilePicker({ profiles, onPick, onAdd }) {
             <Btn onClick={() => setAdding(false)} variant="ghost" small>✕</Btn>
           </div>
         ) : (
-          <button onClick={() => setAdding(true)} className="w-full text-center text-stone-400 hover:text-stone-600 text-sm min-h-11">+ add profile</button>
+          <button onClick={() => setAdding(true)} className="w-full text-center text-stone-500 hover:text-stone-600 text-sm min-h-11">+ add profile</button>
         )}
       </div>
-      <div className="mt-10 text-xs text-stone-400 text-center max-w-xs">
+      <div className="mt-10 text-xs text-stone-500 text-center max-w-xs">
         Shared device, separate journeys — each profile keeps its own deck, progress and streak.
       </div>
     </div>
@@ -1226,11 +1251,13 @@ function Placement({ u, onDone }) {
   const [picked, setPicked] = useState(null);
   const [phase, setPhase] = useState("intro"); // intro | question | feedback | result
   const usedRef = useRef(new Set());
+  const consecRef = useRef(0); // two consecutive corrects required to move up a level
   const TOTAL = 7;
 
   const drawQuestion = (idx) => {
     const lvl = LEVELS[idx];
-    const bank = PLACEMENT_BANK[lvl];
+    // no French TTS on this browser -> listening questions would be unanswerable
+    const bank = PLACEMENT_BANK[lvl].filter((x) => ttsSupported() || x.type !== "listen");
     const avail = bank.filter((x) => !usedRef.current.has(lvl + x.q));
     const pick = (avail.length ? avail : bank)[Math.floor(Math.random() * (avail.length ? avail.length : bank.length))];
     usedRef.current.add(lvl + pick.q);
@@ -1250,8 +1277,13 @@ function Placement({ u, onDone }) {
   const next = () => {
     const last = asked[asked.length - 1];
     let idx = levelIdx;
-    if (last.correct) idx = clamp(idx + 1, 0, LEVELS.length - 1);
-    else idx = clamp(idx - 1, 0, LEVELS.length - 1);
+    if (last.correct) {
+      consecRef.current += 1;
+      if (consecRef.current >= 2) { idx = clamp(idx + 1, 0, LEVELS.length - 1); consecRef.current = 0; }
+    } else {
+      consecRef.current = 0;
+      idx = clamp(idx - 1, 0, LEVELS.length - 1);
+    }
     setLevelIdx(idx);
     if (asked.length >= TOTAL) { setPhase("result"); return; }
     drawQuestion(idx);
@@ -1301,7 +1333,7 @@ function Placement({ u, onDone }) {
               ? "You clearly know more than a beginner — no beginner grind for you. We recommend the Listening-First track: your fastest wins are in training your ear for real spoken French."
               : "We'll start from the foundations: the French sound system, survival phrases, and one new pattern at a time. Short sessions, plenty of repetition."}
           </p>
-          <div className="text-xs text-stone-400 mb-6">
+          <div className="text-xs text-stone-500 mb-6">
             Honest yardstick: reaching A1 typically takes {CEFR_HOURS.A1} of study; A2 {CEFR_HOURS.A2}; B1 {CEFR_HOURS.B1}. Deux tracks real hours, not points.
           </div>
           <div className="flex flex-col gap-2 items-center">
@@ -1332,7 +1364,7 @@ function Placement({ u, onDone }) {
         {q.type === "listen" && (
           <div className="mb-4">
             <SpeakerBtn text={q.audio} rate={0.9} theme={u.theme} label="Play audio" big />
-            <div className="text-xs text-stone-400 mt-2">You can replay it as often as you like.</div>
+            <div className="text-xs text-stone-500 mt-2">You can replay it as often as you like.</div>
           </div>
         )}
         <div className="flex flex-col gap-2">
@@ -1431,7 +1463,7 @@ function SRSReview({ u, setU, go, quickWin }) {
             {due > 0 && <Btn theme={u.theme} onClick={() => { setQueue(dueCards(u.deck).slice(0, 20)); setDoneCount(0); }}>Review {due} due</Btn>}
             <Btn variant="secondary" onClick={() => go("home")}>Home</Btn>
           </div>
-          <div className="mt-4 text-xs text-stone-400">{knownCount(u.deck)} learning · {matureCount(u.deck)} mature · {u.deck.length} total cards</div>
+          <div className="mt-4 text-xs text-stone-500">{knownCount(u.deck)} learning · {matureCount(u.deck)} mature · {u.deck.length} total cards</div>
         </Card>
       </Screen>
     );
@@ -1448,9 +1480,9 @@ function SRSReview({ u, setU, go, quickWin }) {
       <Card className="p-6">
         <div className="text-center mb-5">
           {card.glyph && <div className="text-5xl mb-2">{card.glyph}</div>}
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-1">Say it in French</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-1">Say it in French</div>
           <div className="font-serif text-2xl font-bold text-stone-900">{card.en}</div>
-          {card.exampleEn && !result && <div className="text-sm text-stone-400 mt-2 italic">“{card.exampleEn}”</div>}
+          {card.exampleEn && !result && <div className="text-sm text-stone-500 mt-2 italic">“{card.exampleEn}”</div>}
         </div>
 
         {!result ? (
@@ -1496,7 +1528,7 @@ function SRSReview({ u, setU, go, quickWin }) {
               <Btn variant="success" small onClick={() => grade(4)}>Good</Btn>
               <Btn variant="secondary" small className="border-emerald-300 text-emerald-700" onClick={() => grade(5)}>Easy</Btn>
             </div>
-            <div className="text-center text-xs text-stone-400 mt-2">
+            <div className="text-center text-xs text-stone-500 mt-2">
               {result.verdict === "exact" ? "Suggested: Good or Easy" : result.verdict === "close" ? "Suggested: Hard or Good" : "Suggested: Again or Hard"}
             </div>
           </div>
@@ -1544,15 +1576,15 @@ function Dashboard({ u, partner, go }) {
       <Card className="p-5 mb-4">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <div className="text-xs uppercase tracking-wide text-stone-400">Working level</div>
+            <div className="text-xs uppercase tracking-wide text-stone-500">Working level</div>
             <div className="font-serif text-3xl font-bold">{u.level}</div>
           </div>
           <div className="text-right">
-            <div className="text-xs uppercase tracking-wide text-stone-400">Study time</div>
+            <div className="text-xs uppercase tracking-wide text-stone-500">Study time</div>
             <div className="font-serif text-3xl font-bold">{hours < 1 ? `${Math.round(u.minutes)}m` : `${hours.toFixed(1)}h`}</div>
           </div>
           <div className="text-right">
-            <div className="text-xs uppercase tracking-wide text-stone-400">Streak</div>
+            <div className="text-xs uppercase tracking-wide text-stone-500">Streak</div>
             <div className="font-serif text-3xl font-bold">🔥 {streak}</div>
           </div>
         </div>
@@ -1569,7 +1601,7 @@ function Dashboard({ u, partner, go }) {
             )}
           </div>
         ))}
-        <div className="text-xs text-stone-400 mt-2">
+        <div className="text-xs text-stone-500 mt-2">
           Estimates blend your placement level with measured accuracy. CEFR reality check: A1 {CEFR_HOURS.A1} · A2 {CEFR_HOURS.A2} · B1 {CEFR_HOURS.B1}. No shortcuts exist; consistency does.
         </div>
       </Card>
@@ -1578,7 +1610,7 @@ function Dashboard({ u, partner, go }) {
         <Card className="p-4 text-center">
           <div className="text-3xl font-bold font-serif">{matureCount(u.deck)}</div>
           <div className="text-xs text-stone-500">words mature (21d+ interval)</div>
-          <div className="text-xs text-stone-400 mt-1">{knownCount(u.deck)} learning · {u.deck.length} in deck</div>
+          <div className="text-xs text-stone-500 mt-1">{knownCount(u.deck)} learning · {u.deck.length} in deck</div>
         </Card>
         <Card className="p-4">
           <div className="text-xs text-stone-500 mb-2 text-center">Dictation accuracy (last {dict.length || 0})</div>
@@ -1589,7 +1621,7 @@ function Dashboard({ u, partner, go }) {
               ))}
             </div>
           ) : (
-            <div className="text-center text-stone-400 text-sm py-4">No dictations yet</div>
+            <div className="text-center text-stone-500 text-sm py-4">No dictations yet</div>
           )}
         </Card>
       </div>
@@ -1602,7 +1634,7 @@ function Dashboard({ u, partner, go }) {
       )}
 
       <Card className="p-5">
-        <div className="text-xs uppercase tracking-wide text-stone-400 mb-1">Recommended next</div>
+        <div className="text-xs uppercase tracking-wide text-stone-500 mb-1">Recommended next</div>
         {(() => { const na = nextAction(u); return (
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -1629,7 +1661,7 @@ function Settings({ u, setU, go, onRerunPlacement, onSwitch }) {
         <div className="font-medium text-stone-800">{label}</div>
         <div>{children}</div>
       </div>
-      {hint && <div className="text-xs text-stone-400 mt-1">{hint}</div>}
+      {hint && <div className="text-xs text-stone-500 mt-1">{hint}</div>}
     </div>
   );
   const Seg = ({ value, options, onPick }) => (
@@ -1682,7 +1714,7 @@ function Settings({ u, setU, go, onRerunPlacement, onSwitch }) {
           <Btn variant="secondary" small onClick={onSwitch}>Profiles</Btn>
         </Row>
       </Card>
-      <div className="text-xs text-stone-400 px-2">
+      <div className="text-xs text-stone-500 px-2">
         Deux never promises "fluency in weeks". Realistic CEFR study time: A1 {CEFR_HOURS.A1} · A2 {CEFR_HOURS.A2} · B1 {CEFR_HOURS.B1}. The streak protects the habit; the SRS and your ear do the learning.
       </div>
       <div className="mt-4"><Btn variant="ghost" onClick={() => go("home")}>← Back</Btn></div>
@@ -1710,7 +1742,7 @@ function Home({ u, setU, go }) {
     }));
   };
 
-  const features = isCarol
+  const featuresBase = isCarol
     ? [
         { view: "units", icon: "🧩", title: "Lessons", sub: "One pattern at a time" },
         { view: "phonics", icon: "👂", title: "Sounds of French", sub: "Phonics & pronunciation" },
@@ -1729,6 +1761,12 @@ function Home({ u, setU, go }) {
         { view: "exercise", icon: "🎯", title: "Make me an exercise", sub: "Any focus, on demand" },
       ];
 
+  /* when the "Up next" hero already shows reviews, don't repeat the tile */
+  const features =
+    na.view === "review"
+      ? featuresBase.filter((f) => f.view !== "review").concat([{ view: "dashboard", icon: "📊", title: "Progress", sub: "Honest numbers" }])
+      : featuresBase;
+
   const now = new Date();
   const reminderDue = u.settings.reminders && !doneToday && `${pad2(now.getHours())}:${pad2(now.getMinutes())}` >= u.settings.reminderTime;
 
@@ -1745,7 +1783,11 @@ function Home({ u, setU, go }) {
           <div className="text-4xl">{u.emoji}</div>
         </div>
         <div className="flex gap-2 mt-4 flex-wrap">
-          <span className="bg-white/20 rounded-full px-3 py-1 text-xs font-semibold">🔥 {streak}-day streak{doneToday ? " ✓" : ""}</span>
+          {streak > 0 ? (
+            <span className="bg-white/20 rounded-full px-3 py-1 text-xs font-semibold">🔥 {streak}-day streak{doneToday ? " ✓" : ""}</span>
+          ) : (
+            <span className="bg-white/20 rounded-full px-3 py-1 text-xs font-semibold">🌱 Start your streak today</span>
+          )}
           <span className="bg-white/20 rounded-full px-3 py-1 text-xs font-semibold">{u.level} · {isCarol ? "Foundations" : "Listening-First"}</span>
           <span className="bg-white/20 rounded-full px-3 py-1 text-xs font-semibold">🧠 {matureCount(u.deck)} words solid</span>
         </div>
@@ -1766,8 +1808,8 @@ function Home({ u, setU, go }) {
         </Card>
       )}
 
-      <Card className="p-5 mb-4">
-        <div className="text-xs uppercase tracking-wide text-stone-400 mb-1">Up next</div>
+      <Card className={`p-5 mb-4 ${t.accentL}`}>
+        <div className="text-xs uppercase tracking-wide text-stone-500 mb-1">Up next</div>
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="font-semibold text-lg">{na.label}</div>
@@ -1784,8 +1826,8 @@ function Home({ u, setU, go }) {
 
       <div className="grid grid-cols-2 gap-3">
         {features.map((f) => (
-          <button key={f.view + f.title} onClick={() => go(f.view)} className="bg-white rounded-3xl border border-stone-200 shadow-sm p-4 text-left hover:shadow-md active:scale-95 transition-all min-h-24">
-            <div className="text-2xl mb-1">{f.icon}</div>
+          <button key={f.view + f.title} onClick={() => go(f.view)} className={`bg-white rounded-3xl border shadow-sm p-4 text-left hover:shadow-md active:scale-95 transition-all min-h-24 ${t.edge}`}>
+            <div className={`w-10 h-10 rounded-2xl ${t.chip} flex items-center justify-center text-xl mb-2`}>{f.icon}</div>
             <div className="font-semibold text-stone-900">{f.title}</div>
             <div className="text-xs text-stone-500">{f.sub}</div>
           </button>
@@ -1794,12 +1836,12 @@ function Home({ u, setU, go }) {
 
       {!isCarol && (
         <Card className="p-4 mt-4">
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-2">When you're ready for real audio</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-2">When you're ready for real audio</div>
           {PODCAST_LADDER.map((pod) => (
             <a key={pod.name} href={pod.url} target="_blank" rel="noreferrer" className="flex items-center justify-between py-2 border-b border-stone-100 last:border-0 min-h-11">
               <div>
                 <div className="font-medium text-stone-800 text-sm">{pod.name} <Chip tone="sky">{pod.level}</Chip></div>
-                <div className="text-xs text-stone-400">{pod.why}</div>
+                <div className="text-xs text-stone-500">{pod.why}</div>
               </div>
               <span className="text-stone-300">↗</span>
             </a>
@@ -1815,6 +1857,7 @@ function Home({ u, setU, go }) {
 /* ========================================================================== */
 
 function UnitList({ u, go }) {
+  const t = themeOf(u);
   return (
     <Screen>
       <h1 className="font-serif text-2xl font-bold mb-1">Lessons</h1>
@@ -1829,12 +1872,14 @@ function UnitList({ u, go }) {
             onClick={() => !locked && go("unit", { unitId: unit.id })}
             className={`w-full text-left mb-3 rounded-3xl border p-4 flex items-center gap-4 transition-all min-h-20 ${done ? "bg-emerald-50 border-emerald-200" : locked ? "bg-stone-50 border-stone-200 opacity-50" : "bg-white border-stone-200 shadow-sm hover:shadow-md"}`}
           >
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg font-bold ${done ? "bg-emerald-500 text-white" : "bg-stone-100 text-stone-600"}`}>
-              {done ? "✓" : i + 1}
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg font-bold ${done ? "bg-emerald-500 text-white" : locked ? "bg-stone-100 text-stone-500" : t.numChip}`}>
+              {done ? "✓" : locked ? "🔒" : i + 1}
             </div>
             <div className="flex-1">
               <div className="font-semibold text-stone-900">{unit.title}</div>
-              <div className="text-xs text-stone-500">{unit.scenario} · {unit.grammar.point}</div>
+              <div className="text-xs text-stone-500">
+                {locked ? `Finish “${FOUNDATIONS_UNITS[i - 1].title}” first` : `${unit.scenario} · ${unit.grammar.point}`}
+              </div>
             </div>
             <Chip tone={done ? "green" : "stone"}>{unit.level}</Chip>
           </button>
@@ -1939,7 +1984,7 @@ function UnitView({ u, setU, go, unitId }) {
 
       {step === 0 && (
         <Card className="p-6">
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-2">The idea (from English, one step at a time)</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-2">The idea (from English, one step at a time)</div>
           <p className="text-stone-800 leading-relaxed mb-4">{content.intro}</p>
           {phonics && (
             <div className={`rounded-2xl ${t.soft} p-4 mb-4`}>
@@ -1961,14 +2006,14 @@ function UnitView({ u, setU, go, unitId }) {
 
       {step === 1 && (
         <Card className="p-6">
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-3">Listen and repeat — tap each line</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-3">Listen and repeat — tap each line</div>
           {content.patterns.map((ex, i) => (
             <button key={i} onClick={() => speak(ex.fr, u.settings.ttsRate)} className="w-full text-left rounded-2xl border border-stone-200 p-3 mb-2 hover:bg-stone-50 min-h-14">
               <div className="font-semibold text-stone-900">🔊 {ex.fr}</div>
               {u.settings.dualSubs && <div className="text-sm text-stone-500">{ex.en}</div>}
             </button>
           ))}
-          <div className="text-xs text-stone-400 mb-3">Say each one out loud after the audio — mouth muscles count.</div>
+          <div className="text-xs text-stone-500 mb-3">Say each one out loud after the audio — mouth muscles count.</div>
           <Btn theme={u.theme} onClick={() => setStep(2)}>Practise →</Btn>
         </Card>
       )}
@@ -1977,7 +2022,7 @@ function UnitView({ u, setU, go, unitId }) {
         <Card className="p-6">
           <div className="flex justify-between items-center mb-3">
             <Chip tone="indigo">Blocked practice · {pIdx + 1}/{content.practice.length}</Chip>
-            <span className="text-xs text-stone-400">one structure only</span>
+            <span className="text-xs text-stone-500">one structure only</span>
           </div>
           <div className="font-serif text-lg font-bold mb-3">{item.prompt}</div>
           {!pResult ? (
@@ -2016,6 +2061,16 @@ function UnitView({ u, setU, go, unitId }) {
           <div className="font-serif text-lg font-bold mt-3 mb-3">{content.task_question}</div>
           {!taskFb ? (
             <div>
+              <div className="mb-3">
+                <div className="text-xs text-stone-500 mb-1.5">Words you might need — tap to hear (then build your own sentence):</div>
+                <div className="flex flex-wrap gap-2">
+                  {unit.vocab.map((v) => (
+                    <button key={v.fr} onClick={() => speak(v.fr, u.settings.ttsRate)} className={`rounded-xl ${t.soft} border ${t.edge} px-3 py-2 text-sm min-h-11`} aria-label={`Listen: ${v.fr}`}>
+                      {v.glyph} {v.fr}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <textarea
                 value={taskText} onChange={(e) => setTaskText(e.target.value)}
                 placeholder="Write (or speak) your French here… imperfect is perfect."
@@ -2044,7 +2099,7 @@ function UnitView({ u, setU, go, unitId }) {
                 </div>
               )}
               <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 mb-3">
-                <div className="text-xs uppercase tracking-wide text-stone-400 mb-1">A natural model answer</div>
+                <div className="text-xs uppercase tracking-wide text-stone-500 mb-1">A natural model answer</div>
                 <div className="font-medium">{taskFb.model_answer} <button onClick={() => speak(taskFb.model_answer, u.settings.ttsRate)}>🔊</button></div>
               </div>
               <Btn theme={u.theme} onClick={() => setStep(4)}>Collect your new words →</Btn>
@@ -2113,7 +2168,7 @@ function Phonics({ u, setU, go, lessonId }) {
         <Card className="p-6">
           <h1 className="font-serif text-2xl font-bold mb-2">{lesson.emoji} {lesson.title}</h1>
           <p className="text-stone-600 text-sm mb-4">{lesson.tip}</p>
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-2">Listen, then repeat out loud</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-2">Listen, then repeat out loud</div>
           {lesson.items.map((it) => (
             <div key={it.text} className="flex items-center gap-2 rounded-2xl border border-stone-200 p-3 mb-2">
               <button onClick={() => speak(it.text, 0.75)} className="text-xl min-h-11 min-w-11">🔊</button>
@@ -2128,7 +2183,7 @@ function Phonics({ u, setU, go, lessonId }) {
               ) : null}
             </div>
           ))}
-          {!srSupported() && <div className="text-xs text-stone-400 mb-3">No speech recognition on this browser — repeat out loud anyway; your mouth is the judge today.</div>}
+          {!srSupported() && <div className="text-xs text-stone-500 mb-3">No speech recognition on this browser — repeat out loud anyway; your mouth is the judge today.</div>}
           <Btn theme={u.theme} onClick={() => markDone(lesson.id)} className="w-full mt-2">Done — my ears are warmer ✓</Btn>
         </Card>
       </Screen>
@@ -2168,7 +2223,7 @@ function CSLessons({ u, setU }) {
         <Card className="p-6">
           <h1 className="font-serif text-2xl font-bold mb-3">{lesson.emoji} {lesson.title}</h1>
           <p className="text-stone-700 leading-relaxed text-sm mb-5">{lesson.body}</p>
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-2">Hear it — slow, then natural</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-2">Hear it — slow, then natural</div>
           {lesson.pairs.map((p, i) => (
             <div key={i} className="rounded-2xl border border-stone-200 p-3 mb-2">
               <div className="flex items-center justify-between gap-2">
@@ -2177,8 +2232,8 @@ function CSLessons({ u, setU }) {
                   <div className="text-xs text-indigo-600 font-mono">{p.sounds}</div>
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={() => speak(p.written.replace(/.*→\s*/, ""), 0.7)} className="min-h-11 px-3 rounded-xl bg-stone-100 text-sm">🐢</button>
-                  <button onClick={() => speak(p.written.replace(/.*→\s*/, ""), 1.0)} className="min-h-11 px-3 rounded-xl bg-stone-100 text-sm">🐇</button>
+                  <button onClick={() => speak(p.written.replace(/.*→\s*/, ""), 0.7)} className="min-h-11 px-3 rounded-xl bg-stone-100 text-sm" aria-label={`Listen slowly: ${p.written}`}>🐢</button>
+                  <button onClick={() => speak(p.written.replace(/.*→\s*/, ""), 1.0)} className="min-h-11 px-3 rounded-xl bg-stone-100 text-sm" aria-label={`Listen at natural speed: ${p.written}`}>🐇</button>
                 </div>
               </div>
             </div>
@@ -2340,10 +2395,10 @@ function Library({ u, setU, go }) {
                 ))}
                 <button onClick={() => speak(s.fr, rate)} className="text-stone-300 hover:text-stone-500 text-sm">🔊</button>
               </div>
-              {dual && s.en && <div className="text-sm text-stone-400">{s.en}</div>}
+              {dual && s.en && <div className="text-sm text-stone-500">{s.en}</div>}
             </div>
           ))}
-          <div className="text-xs text-stone-400">Tap any word to look it up and add it to your deck.</div>
+          <div className="text-xs text-stone-500">Tap any word to look it up and add it to your deck.</div>
         </Card>
       ) : (
         <Card className="p-8 mb-3 text-center">
@@ -2354,7 +2409,7 @@ function Library({ u, setU, go }) {
 
       {passage.question && !qDone && (
         <Card className="p-5">
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-1">Prove you got it (forced output!)</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-1">Prove you got it (forced output!)</div>
           <div className="font-semibold mb-2">{passage.question} <button onClick={() => speak(passage.question, rate)}>🔊</button></div>
           <textarea
             value={qAnswer} onChange={(e) => setQAnswer(e.target.value)}
@@ -2510,7 +2565,7 @@ function Conversation({ u, setU, go }) {
           Mode: <Chip tone={u.settings.strictness === "strict" ? "red" : u.settings.strictness === "lenient" ? "green" : "amber"}>{u.settings.strictness}</Chip>
           {u.settings.strictness !== "lenient" ? " — errors get named, not silently forgiven. That's a feature." : " — gentle mode: only blocking errors get flagged."}
         </p>
-        <p className="text-xs text-stone-400 mb-4">Every conversation ends with an honest correction report, and the fixes go to your review deck.</p>
+        <p className="text-xs text-stone-500 mb-4">Every conversation ends with an honest correction report, and the fixes go to your review deck.</p>
         {availScenarios.map((s) => (
           <button key={s.id} onClick={() => startScenario(s)} className="w-full text-left mb-3 rounded-3xl border border-stone-200 bg-white shadow-sm p-4 flex items-center gap-4 hover:shadow-md min-h-20">
             <span className="text-3xl">{s.emoji}</span>
@@ -2575,21 +2630,21 @@ function Conversation({ u, setU, go }) {
               <div className={m.role === "user" ? "" : "text-stone-900"}>
                 {m.fr} {m.role === "ai" && <button onClick={() => speak(m.fr, u.settings.ttsRate)} className="opacity-60">🔊</button>}
               </div>
-              {m.role === "ai" && u.settings.dualSubs && m.en && <div className="text-xs text-stone-400 mt-1">{m.en}</div>}
+              {m.role === "ai" && u.settings.dualSubs && m.en && <div className="text-xs text-stone-500 mt-1">{m.en}</div>}
               {m.note && <div className="text-xs mt-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 px-2 py-1">✏️ {m.note}</div>}
             </div>
           </div>
         ))}
-        {busy && <div className="text-stone-400 text-sm px-2">…</div>}
+        {busy && <div className="text-stone-500 text-sm px-2">…</div>}
         <div ref={bottomRef} />
       </div>
       {suggestions.length > 0 && (
         <div className="mb-3 flex flex-col gap-2">
-          <div className="text-xs text-stone-400">Tap a reply, or write your own:</div>
+          <div className="text-xs text-stone-500">Tap a reply, or write your own:</div>
           {suggestions.map((s, i) => (
             <button key={i} onClick={() => send(s.fr)} className="text-left rounded-2xl border border-dashed border-stone-300 bg-stone-50 px-4 py-2.5 text-sm hover:bg-white min-h-11">
               <span className="font-medium">{s.fr}</span>
-              {u.settings.dualSubs && <span className="text-stone-400"> — {s.en}</span>}
+              {u.settings.dualSubs && <span className="text-stone-500"> — {s.en}</span>}
             </button>
           ))}
         </div>
@@ -2711,7 +2766,7 @@ function ExerciseGen({ u, setU, go }) {
         <h1 className="font-serif text-2xl font-bold mb-1">Make me an exercise</h1>
         <p className="text-sm text-stone-500 mb-4">Pick a focus and a format — a fresh targeted drill, checked and explained.</p>
         <Card className="p-5 mb-3">
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-2">Focus</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-2">Focus</div>
           <Option kind="weak" label={`My weak spot: ${weakest}`} sub="Auto-detected from your recent accuracy" />
           <Option kind="unit" label={`Current lesson: ${currentUnit.grammar.point}`} sub={currentUnit.title} />
           <Option kind="grammar" label="A grammar point" sub="Choose from the drill topics" />
@@ -2726,7 +2781,7 @@ function ExerciseGen({ u, setU, go }) {
           )}
         </Card>
         <Card className="p-5 mb-4">
-          <div className="text-xs uppercase tracking-wide text-stone-400 mb-2">Format</div>
+          <div className="text-xs uppercase tracking-wide text-stone-500 mb-2">Format</div>
           <div className="grid grid-cols-2 gap-2">
             {[["cloze", "✂️ Cloze (fill gap)"], ["translation", "🔁 Translation"], ["dictation", "🎧 Dictation"], ["reorder", "🧩 Reorder"]].map(([k, label]) => (
               <button key={k} onClick={() => setType(k)} className={`rounded-2xl border p-3 text-sm font-semibold min-h-12 ${type === k ? `${t.soft} border-stone-400` : "bg-white border-stone-200"}`}>
@@ -2769,7 +2824,7 @@ function ExerciseGen({ u, setU, go }) {
         {ex.type === "dictation" ? (
           <div className="mb-4">
             <SpeakerBtn text={item.answer} rate={u.settings.ttsRate} theme={u.theme} label="Play sentence" big />
-            <div className="text-xs text-stone-400 mt-1">Replay as often as you need. Type exactly what you hear.</div>
+            <div className="text-xs text-stone-500 mt-1">Replay as often as you need. Type exactly what you hear.</div>
           </div>
         ) : (
           <div className="font-serif text-lg font-bold mb-4">{item.prompt}</div>
@@ -2949,16 +3004,18 @@ function ListeningTrainer({ u, setU, go }) {
   if (phase === "loading" || !clip) return <Screen><Spinner label={`Preparing a rung-${rung.rung} clip…`} /></Screen>;
 
   const Steps = () => {
+    // dots + a label for only the current step: always fits a phone width
     const order = ["listen", "dictate", "diff", "gaps", "shadow", "retell", "done"];
-    const labels = { listen: "Listen", dictate: "Dictate", diff: "Diff", gaps: "Why", shadow: "Shadow", retell: "Retell", done: "✓" };
+    const labels = { listen: "Step 1 · Listen", dictate: "Step 2 · Dictation", diff: "Step 3 · The diff", gaps: "Step 4 · Why you missed it", shadow: "Step 5 · Shadow", retell: "Step 6 · Retell", done: "Done" };
     const cur = order.indexOf(phase);
     return (
-      <div className="flex gap-1 mb-4 overflow-x-auto pb-1">
-        {order.map((s, i) => (
-          <div key={s} className={`text-xs px-2.5 py-1.5 rounded-full whitespace-nowrap font-semibold ${i === cur ? `${t.btn.split(" ")[0]} text-white` : i < cur ? "bg-emerald-100 text-emerald-700" : "bg-stone-100 text-stone-400"}`}>
-            {labels[s]}
-          </div>
-        ))}
+      <div className="flex items-center gap-2.5 mb-4">
+        <div className="flex gap-1.5 shrink-0">
+          {order.map((s, i) => (
+            <div key={s} className={`h-2 rounded-full transition-all ${i === cur ? `w-5 ${t.bar}` : i < cur ? "w-2 bg-emerald-400" : "w-2 bg-stone-300"}`} />
+          ))}
+        </div>
+        <span className="text-xs font-semibold text-stone-600 truncate">{labels[order[cur]]}</span>
       </div>
     );
   };
@@ -2987,7 +3044,9 @@ function ListeningTrainer({ u, setU, go }) {
           <Btn theme={u.theme} onClick={() => setPhase("dictate")} disabled={listens === 0}>
             I've listened — dictation →
           </Btn>
-          <div className="text-xs text-stone-400 mt-2">Tip: two listens beats one. Re-listening to the same clip is the method, not cheating.</div>
+          <div className="text-xs text-stone-500 mt-2">
+            {listens === 0 ? "Play the clip at least once to continue." : "Tip: two listens beats one. Re-listening to the same clip is the method, not cheating."}
+          </div>
         </Card>
       )}
 
@@ -3012,7 +3071,7 @@ function ListeningTrainer({ u, setU, go }) {
         <Card className="p-6">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-serif text-xl font-bold">The diff</h2>
-            <Chip tone={diff.acc >= 80 ? "green" : diff.acc >= 55 ? "amber" : "red"}>{diff.acc}% caught</Chip>
+            <Chip tone={diff.acc >= 80 ? "green" : diff.acc >= 35 ? "amber" : "red"}>{diff.acc}% caught</Chip>
           </div>
           <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 mb-3 text-lg leading-relaxed">
             {diff.targetTokens.map((tok, i) => (
@@ -3020,7 +3079,7 @@ function ListeningTrainer({ u, setU, go }) {
                 {tok.w}{" "}
               </span>
             ))}
-            <button onClick={() => speak(clip.text, rate)} className="text-stone-400">🔊</button>
+            <button onClick={() => speak(clip.text, rate)} className="text-stone-500" aria-label="Listen to the clip again">🔊</button>
           </div>
           {diff.extras.length > 0 && (
             <div className="text-xs text-stone-500 mb-3">You also wrote: {diff.extras.map((w, i) => <span key={i} className="line-through mr-1">{w}</span>)}</div>
@@ -3028,7 +3087,7 @@ function ListeningTrainer({ u, setU, go }) {
           {u.settings.dualSubs || showSubs ? (
             <div className="text-sm text-stone-500 mb-3 border-l-2 border-stone-200 pl-3">{clip.en}</div>
           ) : (
-            <button onClick={() => setShowSubs(true)} className="text-xs text-stone-400 underline mb-3 min-h-11">show English translation</button>
+            <button onClick={() => setShowSubs(true)} className="text-xs text-stone-500 underline mb-3 min-h-11">show English translation</button>
           )}
           <p className="text-sm text-stone-600 mb-4">
             {diff.acc >= 80 ? "Strong. Now find out why the few misses hid from you." : "The highlighted words aren't ones you don't know — they're ones the sound stream disguised. Next: exactly why."}
@@ -3051,8 +3110,8 @@ function ListeningTrainer({ u, setU, go }) {
             <div key={i} className="rounded-2xl border border-stone-200 p-4 mb-3">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="font-bold">{g.segment}</span>
-                <button onClick={() => speak(g.segment, 0.75)} className="min-h-11">🐢</button>
-                <button onClick={() => speak(g.segment, 1.0)} className="min-h-11">🐇</button>
+                <button onClick={() => speak(g.segment, 0.75)} className="min-h-11" aria-label={`Listen slowly: ${g.segment}`}>🐢</button>
+                <button onClick={() => speak(g.segment, 1.0)} className="min-h-11" aria-label={`Listen at natural speed: ${g.segment}`}>🐇</button>
                 <Chip tone={g.phenomenon === "liaison" ? "sky" : g.phenomenon === "elision" ? "amber" : g.phenomenon === "reduction" ? "red" : "indigo"}>{g.phenomenon}</Chip>
               </div>
               {g.sounds_like && <div className="text-sm font-mono text-indigo-600 mb-1">sounds like: {g.sounds_like}</div>}
@@ -3070,7 +3129,7 @@ function ListeningTrainer({ u, setU, go }) {
           <Card className="p-6">
             <div className="flex items-center justify-between mb-2">
               <h2 className="font-serif text-xl font-bold">Shadow the rhythm</h2>
-              <span className="text-xs text-stone-400">{chunkIdx + 1}/{chunks.length}</span>
+              <span className="text-xs text-stone-500">{chunkIdx + 1}/{chunks.length}</span>
             </div>
             <p className="text-sm text-stone-500 mb-4">Play the chunk, then say it straight back — match the melody and the linking, not just the words.</p>
             <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 mb-3 text-lg font-medium text-center">{ck}</div>
@@ -3123,7 +3182,7 @@ function ListeningTrainer({ u, setU, go }) {
             <div>
               <div className="rounded-2xl bg-stone-50 border border-stone-200 p-4 mb-3">
                 <div className="flex items-center gap-2 mb-1">
-                  <Chip tone={retellFb.score >= 4 ? "green" : retellFb.score >= 3 ? "amber" : "red"}>{retellFb.score}/5</Chip>
+                  <Chip tone={retellFb.score >= 4 ? "green" : retellFb.score >= 3 ? "amber" : "red"}>Score {retellFb.score}/5</Chip>
                 </div>
                 <div className="text-sm text-stone-700">{retellFb.feedback}</div>
               </div>
@@ -3149,7 +3208,20 @@ function ListeningTrainer({ u, setU, go }) {
         <Card className="p-6 text-center">
           <div className="text-4xl mb-2">{diff && diff.acc >= 80 ? "🪜" : "🔁"}</div>
           <h2 className="font-serif text-xl font-bold mb-2">Clip complete</h2>
-          <div className="text-sm text-stone-600 mb-1">Dictation: {diff ? diff.acc : "–"}% · listens: {listens} · corrections banked: {(retellFb && (retellFb.corrections || []).length) || 0}</div>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="rounded-2xl bg-stone-50 border border-stone-200 p-3">
+              <div className="font-serif text-xl font-bold">{diff ? `${diff.acc}%` : "–"}</div>
+              <div className="text-xs text-stone-500">dictation</div>
+            </div>
+            <div className="rounded-2xl bg-stone-50 border border-stone-200 p-3">
+              <div className="font-serif text-xl font-bold">{listens}×</div>
+              <div className="text-xs text-stone-500">listens</div>
+            </div>
+            <div className="rounded-2xl bg-stone-50 border border-stone-200 p-3">
+              <div className="font-serif text-xl font-bold">{(retellFb && (retellFb.corrections || []).length) || 0}</div>
+              <div className="text-xs text-stone-500">fixes banked</div>
+            </div>
+          </div>
           <p className="text-sm text-stone-500 mb-4">
             Narrow listening works: hearing the SAME clip 2–3× teaches more than three new clips. {listens < 3 ? "Give it one more spin before you leave —" : "You re-listened like a pro."}
           </p>
@@ -3273,7 +3345,18 @@ function GrammarDrills({ u, setU, go }) {
                 <Chip tone={m === "interleaved" ? "indigo" : "amber"}>{m}</Chip>
               </div>
               <div className="text-xs text-stone-500">{g.hint}</div>
-              {acc !== null && <div className="text-xs text-stone-400 mt-1">{acc}% over {s.seen} items {m === "blocked" && s.seen >= 8 ? "— keep pushing for 75% to unlock interleaving" : ""}</div>}
+              {m === "blocked" ? (
+                <div className="mt-2">
+                  <div className="h-1.5 rounded-full bg-stone-100 overflow-hidden">
+                    <div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${Math.min(100, (s.seen / 8) * 100)}%` }} />
+                  </div>
+                  <div className="text-xs text-stone-500 mt-1">
+                    {s.seen}/8 items{s.seen ? ` · ${acc}% correct` : ""} — 75% over 8+ unlocks interleaving
+                  </div>
+                </div>
+              ) : (
+                acc !== null && <div className="text-xs text-stone-500 mt-1">{acc}% over {s.seen} items — mixing with confusables</div>
+              )}
             </button>
           );
         })}
@@ -3492,6 +3575,7 @@ export default function DeuxApp() {
   if (!ready) {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center">
+        <DeuxStyles />
         <div className="text-center">
           <div className="font-serif text-5xl font-bold text-stone-900 mb-3">Deux<span className="text-rose-500">.</span></div>
           <div className="w-6 h-6 mx-auto rounded-full border-2 border-stone-300 border-t-rose-500 animate-spin" />
@@ -3501,7 +3585,12 @@ export default function DeuxApp() {
   }
 
   if (!u || view === "picker") {
-    return <ProfilePicker profiles={order.map((id) => users[id]).filter(Boolean)} onPick={pick} onAdd={addProfile} />;
+    return (
+      <>
+        <DeuxStyles />
+        <ProfilePicker profiles={order.map((id) => users[id]).filter(Boolean)} onPick={pick} onAdd={addProfile} />
+      </>
+    );
   }
 
   const body = (() => {
@@ -3526,8 +3615,9 @@ export default function DeuxApp() {
 
   return (
     <div className="min-h-screen bg-stone-100 text-stone-900" style={{ WebkitTapHighlightColor: "transparent" }}>
+      <DeuxStyles />
       {view !== "placement" && <TopBar u={u} go={go} view={view} onSwitch={onSwitch} />}
-      {body}
+      <div key={view + (params.unitId || "")} className="view-fade">{body}</div>
     </div>
   );
 }
