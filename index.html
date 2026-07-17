@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Deux — French for two</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.3.1",
+        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client"
+      }
+    }
+  </script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <style>
+    body { margin: 0; background: #f5f5f4; }
+  </style>
+</head>
+<body>
+  <div id="deux-root"></div>
+
+  <!--
+    Dev-harness storage shim. The production environment provides a real
+    async window.storage KV API; here we mirror the same async contract with
+    an in-memory map (the app itself never touches localStorage, per spec).
+    Progress persists for the tab's lifetime in this harness.
+  -->
+  <script>
+    (function () {
+      if (window.storage) return;
+      var mem = {};
+      window.storage = {
+        get: function (k) { return Promise.resolve(k in mem ? mem[k] : null); },
+        set: function (k, v) { mem[k] = v; return Promise.resolve(); },
+        delete: function (k) { delete mem[k]; return Promise.resolve(); },
+        list: function (prefix) {
+          return Promise.resolve(Object.keys(mem).filter(function (k) { return !prefix || k.indexOf(prefix) === 0; }));
+        },
+      };
+    })();
+  </script>
+
+  <!-- Babel transpiles the JSX and injects it as a native ES module, so the
+       import map above resolves "react" / "react-dom/client". Serve over
+       http (e.g. `python3 -m http.server`) — file:// blocks the fetch. -->
+  <script type="text/babel" data-type="module" data-presets="react" src="./deux.jsx"></script>
+</body>
+</html>
