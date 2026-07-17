@@ -19,18 +19,30 @@ The app is designed for a host environment that provides:
 - the browser Web Speech API (`speechSynthesis` for fr-FR audio,
   `SpeechRecognition` for speaking — optional, degrades to self-assessment).
 
-For local development, `index.html` is a thin harness (React + Babel via CDN,
-in-memory `window.storage` shim). Serve over HTTP:
+For standalone hosting (GitHub Pages, any static host) and local development,
+`index.html` loads a prebuilt, fully self-contained build — `app.bundle.js`
+(React inlined, minified ESM) and `app.css` (statically generated Tailwind).
+No CDNs, no runtime transpilation, instant boot screen. Serve over HTTP:
 
 ```bash
 python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-Notes for local use: without the environment's API proxy, AI calls fail
-gracefully — every AI feature has a built-in deterministic fallback, so the
-full loop still works offline. French TTS quality depends on the browser's
-installed voices (iPhone Safari and Chrome both ship fr-FR voices).
+After editing `deux.jsx`, regenerate the build artifacts:
+
+```bash
+npx esbuild deux.jsx --bundle --minify --loader:.jsx=jsx --format=esm --outfile=app.bundle.js
+npx tailwindcss@3.4.5 -i tw.in.css -o app.css --minify   # config content: ["./deux.jsx"]
+```
+
+Notes for standalone use: the harness backs `window.storage` with
+localStorage (namespaced under `deux::`) so progress survives refreshes —
+the app itself only ever talks to the async `window.storage` API. Without
+the environment's API proxy, AI calls fail gracefully — every AI feature has
+a built-in deterministic fallback, so the full loop still works offline.
+French TTS quality depends on the browser's installed voices (iPhone Safari
+and Chrome both ship fr-FR voices).
 
 ## What's inside
 
