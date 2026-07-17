@@ -38,11 +38,33 @@ npx tailwindcss@3.4.5 -i tw.in.css -o app.css --minify   # config content: ["./d
 
 Notes for standalone use: the harness backs `window.storage` with
 localStorage (namespaced under `deux::`) so progress survives refreshes —
-the app itself only ever talks to the async `window.storage` API. Without
-the environment's API proxy, AI calls fail gracefully — every AI feature has
-a built-in deterministic fallback, so the full loop still works offline.
-French TTS quality depends on the browser's installed voices (iPhone Safari
-and Chrome both ship fr-FR voices).
+the app itself only ever talks to the async `window.storage` API. French TTS
+quality depends on the browser's installed voices (iPhone Safari and Chrome
+both ship fr-FR voices).
+
+## AI content engine (standalone hosting)
+
+Out of the box the hosted app runs on its **built-in offline bank**: 40
+listening clips (5 per ladder rung), 30 reading passages, 12 lessons, 40
+grammar drill items plus 20 extras, 28 exercise-generator items, 16 placement
+questions, and ~70 phonics/connected-speech examples. Every feature works
+without any network access.
+
+To unlock **unlimited fresh content** (AI-generated clips, passages, drills,
+free conversation with correction reports), open **Settings → AI content
+engine** and either:
+
+1. **Paste an Anthropic API key** (console.anthropic.com). It is stored only
+   in that device's browser storage and sent only to Anthropic. Simplest —
+   fine for a personal device you don't share.
+2. **Deploy the included Cloudflare Worker** (`cloudflare-worker.js`, free
+   tier, ~5 minutes — instructions in the file header) and paste the worker
+   URL instead. The key then lives server-side and never touches the device.
+   Set the worker's `ALLOWED_ORIGIN` to your GitHub Pages origin so nobody
+   else can spend your credit.
+
+Use "Save & test" to confirm the connection. If the AI is unreachable at any
+moment, every feature silently falls back to the built-in bank.
 
 ## What's inside
 

@@ -34,6 +34,7 @@ const dateKeyOffset = (offsetDays) => { const d = new Date(); d.setDate(d.getDat
 const weekKey = (d = new Date()) => Math.floor(d.getTime() / (7 * 86400000));
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const stripAccents = (s) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const norm = (s) =>
   stripAccents((s || "").toLowerCase())
@@ -191,11 +192,27 @@ const store = {
 };
 
 /* --------------------------------- AI layer ------------------------------ */
+/* In the managed environment the default endpoint works with no key.
+   For standalone hosting (e.g. GitHub Pages) the user can configure, in
+   Settings, EITHER their own Anthropic API key (sent directly from the
+   browser — stays on this device) OR a personal proxy URL (see
+   cloudflare-worker.js) that injects the key server-side. Stored under the
+   device-level "deux:ai" key, never in the repo or the page. */
+
+let AI_CFG = { key: "", url: "" };
+function setAiConfig(cfg) { AI_CFG = { key: ((cfg && cfg.key) || "").trim(), url: ((cfg && cfg.url) || "").trim() }; }
+function aiConfigured() { return !!(AI_CFG.key || AI_CFG.url); }
 
 async function callClaude(system, messages, maxTokens = 1000) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const url = AI_CFG.url || "https://api.anthropic.com/v1/messages";
+  const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
+  if (AI_CFG.key && !AI_CFG.url) {
+    headers["x-api-key"] = AI_CFG.key;
+    headers["anthropic-dangerous-direct-browser-access"] = "true";
+  }
+  const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: maxTokens, system, messages }),
   });
   if (!res.ok) throw new Error("API error " + res.status);
@@ -542,15 +559,64 @@ const CLIP_LADDER = [
   { rung: 8, level: "B1+", rate: 1.05, subs: "none", topicHint: "abstract opinion, complex clauses" },
 ];
 
+/* 5 clips per rung; the trainer draws one at random each session. */
 const FALLBACK_CLIPS = {
-  1: { text: "Ce matin, je vais au marché. J'achète du pain et des pommes. Le marché est près de chez moi.", en: "This morning I'm going to the market. I buy bread and apples. The market is near my place." },
-  2: { text: "Il y a un petit café au coin de la rue. J'y vais tous les matins avant le travail. Le serveur me connaît bien.", en: "There's a little café on the corner. I go there every morning before work. The waiter knows me well." },
-  3: { text: "Hier soir, on est allés au restaurant avec des amis. On a commandé le plat du jour et une carafe d'eau. C'était vraiment bon.", en: "Last night we went to a restaurant with friends. We ordered the daily special and a jug of water. It was really good." },
-  4: { text: "Je ne sais pas si tu as vu la météo, mais il va pleuvoir tout le week-end. On devrait peut-être rester à la maison.", en: "I don't know if you saw the forecast, but it's going to rain all weekend. Maybe we should stay home." },
-  5: { text: "Quand j'étais petit, on passait les vacances chez mes grands-parents. Il y avait un grand jardin et on jouait dehors toute la journée.", en: "When I was little we spent the holidays at my grandparents'. There was a big garden and we played outside all day." },
-  6: { text: "Franchement, je n'ai pas eu le temps de finir. Il y a eu un problème avec le train, du coup je suis arrivé en retard.", en: "Honestly, I didn't have time to finish. There was a problem with the train, so I arrived late." },
-  7: { text: "Elle m'a dit qu'elle arriverait vers huit heures, mais tu sais comment elle est. Si elle n'est pas là à neuf heures, on commence sans elle.", en: "She told me she'd arrive around eight, but you know how she is. If she's not there by nine, we start without her." },
-  8: { text: "Ce qui m'étonne, c'est qu'on en parle seulement maintenant. Tout le monde était au courant depuis des semaines, mais personne n'a rien dit.", en: "What surprises me is that we're only talking about it now. Everyone had known for weeks, but nobody said anything." },
+  1: [
+    { text: "Ce matin, je vais au marché. J'achète du pain et des pommes. Le marché est près de chez moi.", en: "This morning I'm going to the market. I buy bread and apples. The market is near my place." },
+    { text: "Le matin, je me lève à sept heures. Je prends un café et je regarde les nouvelles. Après, je vais au travail à pied.", en: "In the morning I get up at seven. I have a coffee and watch the news. Then I walk to work." },
+    { text: "Le dimanche, on fait une grande promenade. On part après le déjeuner et on rentre vers cinq heures.", en: "On Sundays we go for a long walk. We leave after lunch and come home around five." },
+    { text: "Ma sœur habite près de chez moi. Elle vient dîner à la maison tous les jeudis soirs.", en: "My sister lives near me. She comes over for dinner every Thursday evening." },
+    { text: "Je fais les courses le samedi matin. Il y a moins de monde et les fruits sont plus frais.", en: "I do the shopping on Saturday mornings. There are fewer people and the fruit is fresher." },
+  ],
+  2: [
+    { text: "Il y a un petit café au coin de la rue. J'y vais tous les matins avant le travail. Le serveur me connaît bien.", en: "There's a little café on the corner. I go there every morning before work. The waiter knows me well." },
+    { text: "Dans mon quartier, il y a une boulangerie excellente. J'y achète une baguette tous les jours en rentrant.", en: "In my neighbourhood there's an excellent bakery. I buy a baguette there every day on my way home." },
+    { text: "Le parc à côté de chez nous est très agréable. On y va souvent le week-end quand il fait beau.", en: "The park next to our place is very pleasant. We often go there at weekends when the weather is nice." },
+    { text: "Mes voisins sont très sympas. On s'aide beaucoup, surtout pour les petites choses du quotidien.", en: "My neighbours are really nice. We help each other a lot, especially with everyday little things." },
+    { text: "Il y a un nouveau marché le mercredi matin. Les légumes y sont moins chers qu'au supermarché.", en: "There's a new market on Wednesday mornings. The vegetables there are cheaper than at the supermarket." },
+  ],
+  3: [
+    { text: "Hier soir, on est allés au restaurant avec des amis. On a commandé le plat du jour et une carafe d'eau. C'était vraiment bon.", en: "Last night we went to a restaurant with friends. We ordered the daily special and a jug of water. It was really good." },
+    { text: "Ce week-end, on a visité un petit village près de la mer. On a marché sur la plage et on a très bien mangé.", en: "This weekend we visited a little village by the sea. We walked on the beach and ate really well." },
+    { text: "Hier, j'ai retrouvé un vieil ami en ville. On a pris un verre et on a parlé pendant des heures.", en: "Yesterday I met up with an old friend in town. We had a drink and talked for hours." },
+    { text: "Samedi soir, on est allés voir un concert. Il y avait beaucoup de monde, mais c'était génial.", en: "Saturday night we went to see a concert. There were a lot of people, but it was great." },
+    { text: "La semaine dernière, j'ai enfin fini ce gros projet. Pour fêter ça, on est sortis dîner tous ensemble.", en: "Last week I finally finished that big project. To celebrate, we all went out for dinner together." },
+  ],
+  4: [
+    { text: "Je ne sais pas si tu as vu la météo, mais il va pleuvoir tout le week-end. On devrait peut-être rester à la maison.", en: "I don't know if you saw the forecast, but it's going to rain all weekend. Maybe we should stay home." },
+    { text: "Je sais pas encore ce qu'on fait ce soir. Y a un bon film au cinéma, mais on est un peu fatigués.", en: "I don't know yet what we're doing tonight. There's a good film on at the cinema, but we're a bit tired." },
+    { text: "T'as vu qu'il va faire super beau demain ? On devrait en profiter pour aller à la plage.", en: "Did you see it's going to be gorgeous tomorrow? We should make the most of it and go to the beach." },
+    { text: "On va peut-être partir quelques jours la semaine prochaine. Ça dépend du travail de ma femme.", en: "We might go away for a few days next week. It depends on my wife's work." },
+    { text: "Il paraît qu'il va neiger ce week-end. Du coup, on va rester bien au chaud à la maison.", en: "Apparently it's going to snow this weekend. So we're going to stay nice and warm at home." },
+  ],
+  5: [
+    { text: "Quand j'étais petit, on passait les vacances chez mes grands-parents. Il y avait un grand jardin et on jouait dehors toute la journée.", en: "When I was little we spent the holidays at my grandparents'. There was a big garden and we played outside all day." },
+    { text: "Quand j'étais adolescent, j'écoutais de la musique toute la journée. Mes parents trouvaient ça insupportable.", en: "When I was a teenager I listened to music all day long. My parents found it unbearable." },
+    { text: "Petits, on passait l'été au bord d'un lac. On se baignait le matin et on pêchait l'après-midi.", en: "As kids we spent the summer by a lake. We swam in the morning and fished in the afternoon." },
+    { text: "Ma grand-mère faisait un gâteau au chocolat incroyable. Toute la maison sentait bon quand on arrivait.", en: "My grandmother made an incredible chocolate cake. The whole house smelled wonderful when we arrived." },
+    { text: "À l'école, j'avais un copain qui faisait rire toute la classe. Même les profs avaient du mal à rester sérieux.", en: "At school I had a friend who made the whole class laugh. Even the teachers struggled to keep a straight face." },
+  ],
+  6: [
+    { text: "Franchement, je n'ai pas eu le temps de finir. Il y a eu un problème avec le train, du coup je suis arrivé en retard.", en: "Honestly, I didn't have time to finish. There was a problem with the train, so I arrived late." },
+    { text: "Bon, en fait, la réunion a été annulée au dernier moment. Personne ne m'avait prévenu, du coup j'ai fait le trajet pour rien.", en: "Well, actually, the meeting was cancelled at the last minute. Nobody had warned me, so I made the trip for nothing." },
+    { text: "J'ai un souci avec ma voiture depuis hier. Elle fait un bruit bizarre, il faut que je l'emmène au garage.", en: "I've had a problem with my car since yesterday. It's making a strange noise, I need to take it to the garage." },
+    { text: "Franchement, le livreur s'est encore trompé d'adresse. C'est la troisième fois ce mois-ci, ça commence à bien faire.", en: "Honestly, the delivery driver got the address wrong again. It's the third time this month — it's getting a bit much." },
+    { text: "On devait partir à huit heures, mais évidemment tout le monde était en retard. Bref, on est arrivés après le début.", en: "We were supposed to leave at eight, but of course everyone was late. Anyway, we arrived after the start." },
+  ],
+  7: [
+    { text: "Elle m'a dit qu'elle arriverait vers huit heures, mais tu sais comment elle est. Si elle n'est pas là à neuf heures, on commence sans elle.", en: "She told me she'd arrive around eight, but you know how she is. If she's not there by nine, we start without her." },
+    { text: "Il m'a dit que le restaurant était complet, mais j'ai l'impression qu'il n'a même pas appelé. Ça ne m'étonnerait pas de lui.", en: "He told me the restaurant was full, but I get the feeling he didn't even call. It wouldn't surprise me, coming from him." },
+    { text: "Elle pense qu'on devrait vendre la maison, mais moi, je ne suis pas convaincu. On en reparlera calmement ce week-end.", en: "She thinks we should sell the house, but me, I'm not convinced. We'll talk it over calmly this weekend." },
+    { text: "D'après la voisine, les travaux dureraient encore deux mois. Si c'est vrai, on ne va pas dormir tranquilles avant l'automne.", en: "According to the neighbour, the building work will last another two months. If that's true, we won't sleep in peace before autumn." },
+    { text: "Ils ont annoncé qu'ils allaient se marier l'année prochaine. Tout le monde s'y attendait, mais ça fait quand même plaisir.", en: "They announced they're getting married next year. Everyone was expecting it, but it's still lovely news." },
+  ],
+  8: [
+    { text: "Ce qui m'étonne, c'est qu'on en parle seulement maintenant. Tout le monde était au courant depuis des semaines, mais personne n'a rien dit.", en: "What surprises me is that we're only talking about it now. Everyone had known for weeks, but nobody said anything." },
+    { text: "Ce qui me dérange, ce n'est pas la décision elle-même, c'est la façon dont elle a été prise. On aurait pu au moins nous consulter.", en: "What bothers me isn't the decision itself, it's the way it was made. They could at least have consulted us." },
+    { text: "On dit souvent que les gens ne lisent plus, mais je n'en suis pas sûr. Ils lisent autrement, voilà tout.", en: "People often say nobody reads any more, but I'm not so sure. They read differently, that's all." },
+    { text: "Plus j'y réfléchis, plus je me dis qu'on juge trop vite. La plupart des gens font simplement de leur mieux.", en: "The more I think about it, the more I tell myself we judge too quickly. Most people are simply doing their best." },
+    { text: "Si on m'avait dit il y a dix ans que je vivrais ici, je ne l'aurais jamais cru. La vie prend parfois des chemins étonnants.", en: "If someone had told me ten years ago that I'd be living here, I'd never have believed it. Life sometimes takes surprising paths." },
+  ],
 };
 
 /* Local fallback for the connected-speech gap analysis when the API is
@@ -750,6 +816,90 @@ const FOUNDATIONS_UNITS = [
     ],
     task: { prompt: "At hotel reception: say there's a problem, the shower doesn't work, and ask if they can help.", model: "Excusez-moi, il y a un problème. La douche ne marche pas. Pouvez-vous m'aider ?" },
   },
+  {
+    id: "u9", title: "Quel temps fait-il ?", scenario: "Talk about the weather (small talk!)", level: "A1", phonicsId: null,
+    grammar: {
+      point: "il fait + weather",
+      brief: "French weather runs on 'il fait' (it makes): il fait beau (it's nice), il fait froid (it's cold), il fait chaud (it's hot). Rain and snow get their own verbs: il pleut, il neige. Weather talk is the universal French small-talk opener — master this and you can chat with any shopkeeper.",
+      examples: [
+        { fr: "Il fait beau aujourd'hui !", en: "It's lovely today!" },
+        { fr: "Il fait très froid ce matin.", en: "It's very cold this morning." },
+        { fr: "Il pleut depuis lundi.", en: "It's been raining since Monday." },
+        { fr: "Quel temps fait-il à Paris ?", en: "What's the weather like in Paris?" },
+      ],
+    },
+    vocab: [
+      { fr: "il fait beau", en: "the weather is nice", glyph: "☀️", example: "Il fait beau aujourd'hui !" },
+      { fr: "il fait froid", en: "it's cold", glyph: "🥶", example: "Il fait froid ce matin." },
+      { fr: "il pleut", en: "it's raining", glyph: "🌧️", example: "Il pleut beaucoup." },
+      { fr: "il neige", en: "it's snowing", glyph: "❄️", example: "Il neige en montagne." },
+      { fr: "un parapluie", en: "an umbrella", glyph: "☂️", example: "Prends ton parapluie !" },
+    ],
+    task: { prompt: "A neighbour says « Bonjour ! Quel temps ! ». Agree, say it's cold and raining, and that you have your umbrella.", model: "Oui ! Il fait froid et il pleut. Mais j'ai mon parapluie !" },
+  },
+  {
+    id: "u10", title: "Ma famille", scenario: "Talk about your family", level: "A1", phonicsId: null,
+    grammar: {
+      point: "mon / ma / mes (possessives)",
+      brief: "'My' changes with the noun: mon mari (my husband, masculine), ma sœur (my sister, feminine), mes parents (my parents, plural). One trap: before a vowel it's always mon, even for feminine words — mon amie. The possessive matches the THING owned, not the owner.",
+      examples: [
+        { fr: "Mon mari s'appelle Stuart.", en: "My husband is called Stuart." },
+        { fr: "Ma sœur habite à Manchester.", en: "My sister lives in Manchester." },
+        { fr: "Mes parents sont à la retraite.", en: "My parents are retired." },
+        { fr: "Mon amie Claire adore la France.", en: "My friend Claire loves France." },
+      ],
+    },
+    vocab: [
+      { fr: "le mari", en: "the husband", glyph: "🤵", example: "Mon mari s'appelle Stuart." },
+      { fr: "la femme", en: "the wife / the woman", glyph: "👩", example: "Sa femme est très gentille." },
+      { fr: "la sœur", en: "the sister", glyph: "👭", example: "Ma sœur habite à Manchester." },
+      { fr: "le frère", en: "the brother", glyph: "👬", example: "Mon frère a deux enfants." },
+      { fr: "les parents", en: "the parents", glyph: "👵👴", example: "Mes parents sont à la retraite." },
+    ],
+    task: { prompt: "Introduce two members of your family: their name and one small fact each.", model: "Mon mari s'appelle Stuart. Il aime le café. Ma sœur s'appelle Anne et elle habite à Londres." },
+  },
+  {
+    id: "u11", title: "Le week-end dernier", scenario: "Say what you did (first past tense!)", level: "A1", phonicsId: null,
+    grammar: {
+      point: "passé composé with avoir (j'ai + participle)",
+      brief: "Your first past tense: take avoir (j'ai, tu as…) and add the past participle — j'ai mangé (I ate), j'ai visité (I visited), j'ai regardé (I watched). For -er verbs the participle just swaps -er for -é. Add 'hier' or 'le week-end dernier' and you're telling stories about your life.",
+      examples: [
+        { fr: "Hier, j'ai mangé au restaurant.", en: "Yesterday, I ate at a restaurant." },
+        { fr: "J'ai visité un musée samedi.", en: "I visited a museum on Saturday." },
+        { fr: "Nous avons regardé un film.", en: "We watched a film." },
+        { fr: "C'était super !", en: "It was great!" },
+      ],
+    },
+    vocab: [
+      { fr: "hier", en: "yesterday", glyph: "📅", example: "Hier, j'ai mangé au restaurant." },
+      { fr: "le week-end dernier", en: "last weekend", glyph: "🗓️", example: "Le week-end dernier, j'ai visité Bath." },
+      { fr: "j'ai mangé", en: "I ate", glyph: "🍽️", example: "J'ai mangé une crêpe." },
+      { fr: "j'ai visité", en: "I visited", glyph: "🏛️", example: "J'ai visité un musée." },
+      { fr: "c'était super", en: "it was great", glyph: "🤩", example: "C'était super !" },
+    ],
+    task: { prompt: "Tell a friend two things you did last weekend, and that it was great.", model: "Le week-end dernier, j'ai visité un marché et j'ai mangé une crêpe. C'était super !" },
+  },
+  {
+    id: "u12", title: "On se retrouve quand ?", scenario: "Make plans with someone", level: "A1", phonicsId: null,
+    grammar: {
+      point: "on + time expressions",
+      brief: "Spoken French loves 'on' — it means 'we' in everyday speech: on va (we go), on se retrouve (we meet up). Add a time — ce soir (tonight), demain (tomorrow), à sept heures — and you can arrange anything. Seal the deal with 'd'accord !' (okay!).",
+      examples: [
+        { fr: "On se retrouve à sept heures ?", en: "Shall we meet at seven?" },
+        { fr: "On va au restaurant ce soir ?", en: "Shall we go to the restaurant tonight?" },
+        { fr: "Demain, on visite le château.", en: "Tomorrow we're visiting the castle." },
+        { fr: "D'accord, à demain !", en: "Okay, see you tomorrow!" },
+      ],
+    },
+    vocab: [
+      { fr: "demain", en: "tomorrow", glyph: "🌅", example: "À demain !" },
+      { fr: "ce soir", en: "tonight", glyph: "🌙", example: "On sort ce soir ?" },
+      { fr: "à quelle heure", en: "at what time", glyph: "⏰", example: "À quelle heure on se retrouve ?" },
+      { fr: "on se retrouve", en: "we meet up", glyph: "🤝", example: "On se retrouve au café." },
+      { fr: "d'accord", en: "okay / agreed", glyph: "👌", example: "D'accord, à ce soir !" },
+    ],
+    task: { prompt: "Suggest meeting a friend at the café tonight at eight, and confirm with 'okay, see you tonight!'.", model: "On se retrouve au café ce soir à huit heures ? D'accord, à ce soir !" },
+  },
 ];
 
 /* ----------------- interleaved grammar topics (Stuart, A2/B1) --------------- */
@@ -809,6 +959,41 @@ const GRAMMAR_TOPICS = [
   },
 ];
 
+/* Extra offline drill items per topic, pooled with each topic's fallback. */
+const EXTRA_DRILLS = {
+  "pc-imp": [
+    { type: "mcq", prompt: "Il ___ toujours du sucre dans son café. (habit)", options: ["mettait", "a mis", "met", "mettra"], answer: "mettait", explanation: "'Toujours' + past habit → imparfait: il mettait." },
+    { type: "mcq", prompt: "Soudain, quelqu'un ___ à la porte.", options: ["a frappé", "frappait", "frappe", "frappera"], answer: "a frappé", explanation: "'Soudain' signals a sudden completed event → passé composé." },
+    { type: "type", prompt: "Translate: 'The weather was nice and we were happy.' (faire beau / être contents)", answer: "il faisait beau et nous étions contents", explanation: "Descriptions and states in the past → imparfait for both verbs." },
+    { type: "mcq", prompt: "Pendant que je ___, le téléphone a sonné.", options: ["cuisinais", "ai cuisiné", "cuisine", "cuisinerai"], answer: "cuisinais", explanation: "'Pendant que' + ongoing background action → imparfait." },
+  ],
+  "aux-avoir-etre": [
+    { type: "mcq", prompt: "Vous ___ venus en voiture ?", options: ["êtes", "avez", "étiez", "aviez"], answer: "êtes", explanation: "'Venir' is a movement verb → être: vous êtes venus." },
+    { type: "mcq", prompt: "Elle s'___ levée très tôt ce matin.", options: ["est", "a", "était", "avait"], answer: "est", explanation: "All reflexive verbs take être: elle s'est levée." },
+    { type: "type", prompt: "Translate: 'We stayed at home.' (rester, nous)", answer: "nous sommes restés à la maison", explanation: "'Rester' takes être; participle agrees: restés." },
+    { type: "mcq", prompt: "J'___ perdu mes clés hier.", options: ["ai", "suis", "étais", "avais"], answer: "ai", explanation: "'Perdre' is an ordinary transitive verb → avoir: j'ai perdu." },
+  ],
+  futures: [
+    { type: "mcq", prompt: "Regarde ces nuages ! Il ___ pleuvoir.", options: ["va", "pleuvra", "allait", "irait"], answer: "va", explanation: "Evidence right in front of you → futur proche: il va pleuvoir." },
+    { type: "mcq", prompt: "Quand je serai grand, je ___ pilote.", options: ["serai", "vais être", "suis", "étais"], answer: "serai", explanation: "Distant, hypothetical future → futur simple: je serai." },
+    { type: "type", prompt: "Translate: 'We'll see.' (voir, on)", answer: "on verra", explanation: "Classic futur simple set phrase: on verra." },
+    { type: "mcq", prompt: "Attends-moi, j'___ dans cinq minutes !", options: ["arrive", "arriverai", "arrivais", "vais arrivé"], answer: "arrive", explanation: "Very near future often uses plain present in French: j'arrive !" },
+  ],
+  "obj-pronouns": [
+    { type: "mcq", prompt: "Tu as téléphoné à ta mère ? — Oui, je ___ ai téléphoné.", options: ["lui", "la", "le", "leur"], answer: "lui", explanation: "'Téléphoner à' → indirect object → lui." },
+    { type: "mcq", prompt: "Ces chaussures ? Je ___ achète !", options: ["les", "leur", "lui", "la"], answer: "les", explanation: "Plural direct object → les, before the verb." },
+    { type: "type", prompt: "Translate: 'I gave it to him.' (donner, le)", answer: "je le lui ai donné", explanation: "Double pronouns: le (it) before lui (to him), both before the auxiliary." },
+    { type: "mcq", prompt: "Tu me ___ prêtes ? (ton vélo)", options: ["le", "lui", "les", "leur"], answer: "le", explanation: "'Ton vélo' → le; order: me le prêtes." },
+  ],
+  questions: [
+    { type: "mcq", prompt: "« Pourquoi est-ce que tu ris ? » asks…", options: ["Why are you laughing?", "What are you laughing at?", "Are you laughing?", "When did you laugh?"], answer: "Why are you laughing?", explanation: "Pourquoi = why; est-ce que keeps normal word order." },
+    { type: "type", prompt: "Ask casually (intonation only): 'You saw the match?' (voir, le match)", answer: "tu as vu le match", explanation: "Spoken French: plain statement + rising intonation — Tu as vu le match ?" },
+    { type: "mcq", prompt: "« Qui est-ce qui a appelé ? » asks about…", options: ["the person who called", "the thing that was called", "the time of the call", "the reason for the call"], answer: "the person who called", explanation: "Qui est-ce qui = who (subject)." },
+    { type: "mcq", prompt: "Formal inversion of « Elle vient demain » :", options: ["Vient-elle demain ?", "Elle vient demain ?", "Est-ce qu'elle vient demain ?", "Demain vient-elle ?"], answer: "Vient-elle demain ?", explanation: "Verb-pronoun inversion with a hyphen is the formal register." },
+  ],
+};
+const topicPool = (topic) => [...topic.fallback, ...(EXTRA_DRILLS[topic.id] || [])];
+
 /* --------------------------- placement question bank ------------------------ */
 
 const PLACEMENT_BANK = {
@@ -861,66 +1046,278 @@ const PODCAST_LADDER = [
 
 /* ------------------------- fallback reading passages ------------------------ */
 
+/* Several passages per band; the library draws one at random when the AI
+   generator is unavailable. */
 const FALLBACK_PASSAGES = {
-  A0: {
-    title: "Au café", question: "Qu'est-ce que la personne commande ?",
-    sentences: [
-      { fr: "Je suis au café.", en: "I am at the café." },
-      { fr: "Je voudrais un café et un croissant.", en: "I would like a coffee and a croissant." },
-      { fr: "Le serveur est très gentil.", en: "The waiter is very kind." },
-      { fr: "Le café coûte trois euros.", en: "The coffee costs three euros." },
-      { fr: "Merci, au revoir !", en: "Thank you, goodbye!" },
-    ],
-  },
-  A1: {
-    title: "Ma petite ville", question: "Où est le marché ?",
-    sentences: [
-      { fr: "J'habite dans une petite ville.", en: "I live in a small town." },
-      { fr: "Il y a un marché près de la gare.", en: "There is a market near the station." },
-      { fr: "Le matin, j'achète du pain et des fruits.", en: "In the morning, I buy bread and fruit." },
-      { fr: "L'après-midi, je travaille à la maison.", en: "In the afternoon, I work at home." },
-      { fr: "Le soir, je regarde la télé avec mon mari.", en: "In the evening, I watch TV with my husband." },
-    ],
-  },
-  A2: {
-    title: "Un week-end à Lyon", question: "Qu'est-ce qu'ils ont fait samedi soir ?",
-    sentences: [
-      { fr: "Le mois dernier, nous sommes allés à Lyon.", en: "Last month, we went to Lyon." },
-      { fr: "Samedi matin, on a visité la vieille ville.", en: "Saturday morning, we visited the old town." },
-      { fr: "Il faisait beau et les rues étaient pleines de monde.", en: "The weather was nice and the streets were full of people." },
-      { fr: "Samedi soir, on a mangé dans un bouchon lyonnais.", en: "Saturday evening, we ate in a traditional Lyon restaurant." },
-      { fr: "C'était délicieux, mais un peu cher.", en: "It was delicious, but a bit expensive." },
-    ],
-  },
-  B1: {
-    title: "Le télétravail", question: "Quel est l'inconvénient mentionné ?",
-    sentences: [
-      { fr: "Depuis quelques années, le télétravail s'est beaucoup développé.", en: "In recent years, remote work has grown a lot." },
-      { fr: "Beaucoup de gens apprécient de ne plus perdre de temps dans les transports.", en: "Many people appreciate no longer wasting time commuting." },
-      { fr: "Pourtant, certains trouvent qu'on se sent parfois isolé.", en: "However, some find that you sometimes feel isolated." },
-      { fr: "Ce qui compte, c'est de trouver un équilibre qui convient à chacun.", en: "What matters is finding a balance that suits each person." },
-    ],
-  },
+  A0: [
+    { title: "Au café", question: "Qu'est-ce que la personne commande ?", question_answer: "Un café et un croissant.",
+      sentences: [
+        { fr: "Je suis au café.", en: "I am at the café." },
+        { fr: "Je voudrais un café et un croissant.", en: "I would like a coffee and a croissant." },
+        { fr: "Le serveur est très gentil.", en: "The waiter is very kind." },
+        { fr: "Le café coûte trois euros.", en: "The coffee costs three euros." },
+        { fr: "Merci, au revoir !", en: "Thank you, goodbye!" },
+      ] },
+    { title: "Ma famille", question: "Qui aime le café ?", question_answer: "Le mari aime le café.",
+      sentences: [
+        { fr: "Voici ma famille.", en: "Here is my family." },
+        { fr: "Mon mari s'appelle Stuart.", en: "My husband's name is Stuart." },
+        { fr: "Il aime le café, moi j'aime le thé.", en: "He likes coffee, I like tea." },
+        { fr: "Nous habitons dans une petite maison.", en: "We live in a small house." },
+      ] },
+    { title: "Au marché", question: "Les tomates coûtent combien ?", question_answer: "Deux euros.",
+      sentences: [
+        { fr: "Le marché est très joli.", en: "The market is very pretty." },
+        { fr: "Il y a des pommes rouges et des tomates.", en: "There are red apples and tomatoes." },
+        { fr: "Les tomates coûtent deux euros.", en: "The tomatoes cost two euros." },
+        { fr: "J'achète aussi du pain.", en: "I also buy some bread." },
+      ] },
+    { title: "Dans ma rue", question: "Qu'est-ce qu'il y a à gauche ?", question_answer: "Une boulangerie.",
+      sentences: [
+        { fr: "J'habite dans une rue calme.", en: "I live on a quiet street." },
+        { fr: "À gauche, il y a une boulangerie.", en: "On the left, there is a bakery." },
+        { fr: "À droite, il y a un petit parc.", en: "On the right, there is a small park." },
+        { fr: "J'aime beaucoup ma rue.", en: "I really like my street." },
+      ] },
+    { title: "Le petit déjeuner", question: "Qu'est-ce que la personne mange le matin ?", question_answer: "Du pain avec du beurre.",
+      sentences: [
+        { fr: "Le matin, je mange du pain avec du beurre.", en: "In the morning, I eat bread with butter." },
+        { fr: "Je bois un grand thé.", en: "I drink a big tea." },
+        { fr: "Mon mari boit deux cafés !", en: "My husband drinks two coffees!" },
+        { fr: "Après, nous sommes prêts pour la journée.", en: "After that, we are ready for the day." },
+      ] },
+    { title: "Au parc", question: "Quel temps fait-il ?", question_answer: "Il fait beau.",
+      sentences: [
+        { fr: "Aujourd'hui, il fait beau.", en: "Today, the weather is nice." },
+        { fr: "Je suis au parc avec une amie.", en: "I am at the park with a friend." },
+        { fr: "Il y a des enfants et des chiens.", en: "There are children and dogs." },
+        { fr: "Nous mangeons une glace.", en: "We are eating an ice cream." },
+      ] },
+    { title: "Ma maison", question: "Où est le jardin ?", question_answer: "Derrière la maison.",
+      sentences: [
+        { fr: "Ma maison est petite mais jolie.", en: "My house is small but pretty." },
+        { fr: "Il y a deux chambres et une cuisine.", en: "There are two bedrooms and a kitchen." },
+        { fr: "Derrière la maison, il y a un jardin.", en: "Behind the house, there is a garden." },
+        { fr: "Le soir, nous mangeons dans le jardin.", en: "In the evening, we eat in the garden." },
+      ] },
+  ],
+  A1: [
+    { title: "Ma petite ville", question: "Où est le marché ?", question_answer: "Près de la gare.",
+      sentences: [
+        { fr: "J'habite dans une petite ville.", en: "I live in a small town." },
+        { fr: "Il y a un marché près de la gare.", en: "There is a market near the station." },
+        { fr: "Le matin, j'achète du pain et des fruits.", en: "In the morning, I buy bread and fruit." },
+        { fr: "L'après-midi, je travaille à la maison.", en: "In the afternoon, I work at home." },
+        { fr: "Le soir, je regarde la télé avec mon mari.", en: "In the evening, I watch TV with my husband." },
+      ] },
+    { title: "Une journée au travail", question: "À quelle heure commence le travail ?", question_answer: "À neuf heures.",
+      sentences: [
+        { fr: "Je commence le travail à neuf heures.", en: "I start work at nine o'clock." },
+        { fr: "À midi, je mange avec mes collègues.", en: "At noon, I eat with my colleagues." },
+        { fr: "Nous parlons de tout et de rien.", en: "We talk about everything and nothing." },
+        { fr: "Je finis à cinq heures et je rentre à pied.", en: "I finish at five and walk home." },
+      ] },
+    { title: "Les courses du samedi", question: "Pourquoi la personne aime le fromager ?", question_answer: "Parce qu'il est drôle (il raconte des blagues).",
+      sentences: [
+        { fr: "Le samedi, nous faisons les courses ensemble.", en: "On Saturdays, we do the shopping together." },
+        { fr: "Nous achetons des légumes, du poisson et du fromage.", en: "We buy vegetables, fish and cheese." },
+        { fr: "Le fromager raconte toujours des blagues.", en: "The cheesemonger always tells jokes." },
+        { fr: "C'est pour ça que j'aime bien aller chez lui.", en: "That's why I like going to his shop." },
+      ] },
+    { title: "Mon chat", question: "Où dort le chat ?", question_answer: "Sur le canapé.",
+      sentences: [
+        { fr: "Nous avons un chat qui s'appelle Minou.", en: "We have a cat called Minou." },
+        { fr: "Il dort toute la journée sur le canapé.", en: "He sleeps all day on the sofa." },
+        { fr: "Le soir, il demande à manger à six heures exactement.", en: "In the evening, he asks for food at exactly six o'clock." },
+        { fr: "C'est le vrai chef de la maison.", en: "He is the real boss of the house." },
+      ] },
+    { title: "Une carte postale", question: "Quel temps fait-il en Bretagne ?", question_answer: "Il fait beau mais il y a du vent.",
+      sentences: [
+        { fr: "Chère Sophie, nous sommes en Bretagne.", en: "Dear Sophie, we are in Brittany." },
+        { fr: "Il fait beau, mais il y a beaucoup de vent.", en: "The weather is nice, but it's very windy." },
+        { fr: "Hier, nous avons mangé des crêpes délicieuses.", en: "Yesterday, we ate delicious crêpes." },
+        { fr: "À bientôt, grosses bises !", en: "See you soon, big kisses!" },
+      ] },
+    { title: "Au restaurant", question: "Qu'est-ce que la personne choisit ?", question_answer: "Le poisson avec des légumes.",
+      sentences: [
+        { fr: "Ce soir, nous dînons au restaurant.", en: "Tonight, we are having dinner at a restaurant." },
+        { fr: "Le serveur donne le menu.", en: "The waiter gives us the menu." },
+        { fr: "Je choisis le poisson avec des légumes.", en: "I choose the fish with vegetables." },
+        { fr: "Mon mari prend le poulet, comme toujours !", en: "My husband has the chicken, as always!" },
+      ] },
+    { title: "Le dimanche matin", question: "Qu'est-ce qu'ils achètent à la boulangerie ?", question_answer: "Des croissants.",
+      sentences: [
+        { fr: "Le dimanche matin, nous restons à la maison.", en: "On Sunday mornings, we stay at home." },
+        { fr: "Mon mari va à la boulangerie acheter des croissants.", en: "My husband goes to the bakery to buy croissants." },
+        { fr: "Nous prenons le petit déjeuner dans le jardin.", en: "We have breakfast in the garden." },
+        { fr: "C'est mon moment préféré de la semaine.", en: "It's my favourite moment of the week." },
+      ] },
+    { title: "Les quatre saisons", question: "Quelle saison la personne préfère-t-elle ?", question_answer: "Le printemps.",
+      sentences: [
+        { fr: "En été, il fait chaud et les jours sont longs.", en: "In summer, it's hot and the days are long." },
+        { fr: "En hiver, il fait froid et il pleut souvent.", en: "In winter, it's cold and it often rains." },
+        { fr: "Moi, je préfère le printemps.", en: "Me, I prefer spring." },
+        { fr: "Les fleurs sont belles et l'air sent bon.", en: "The flowers are beautiful and the air smells good." },
+      ] },
+  ],
+  A2: [
+    { title: "Un week-end à Lyon", question: "Qu'est-ce qu'ils ont fait samedi soir ?", question_answer: "Ils ont mangé dans un bouchon lyonnais.",
+      sentences: [
+        { fr: "Le mois dernier, nous sommes allés à Lyon.", en: "Last month, we went to Lyon." },
+        { fr: "Samedi matin, on a visité la vieille ville.", en: "Saturday morning, we visited the old town." },
+        { fr: "Il faisait beau et les rues étaient pleines de monde.", en: "The weather was nice and the streets were full of people." },
+        { fr: "Samedi soir, on a mangé dans un bouchon lyonnais.", en: "Saturday evening, we ate in a traditional Lyon restaurant." },
+        { fr: "C'était délicieux, mais un peu cher.", en: "It was delicious, but a bit expensive." },
+      ] },
+    { title: "La nouvelle boulangerie", question: "Pourquoi y a-t-il la queue ?", question_answer: "Parce que le pain est excellent (tout le quartier veut y acheter son pain).",
+      sentences: [
+        { fr: "Une nouvelle boulangerie a ouvert dans notre rue.", en: "A new bakery has opened on our street." },
+        { fr: "Depuis, il y a la queue tous les matins.", en: "Since then, there's been a queue every morning." },
+        { fr: "Le boulanger travaillait avant dans un grand restaurant.", en: "The baker used to work in a big restaurant." },
+        { fr: "Son pain est tellement bon que tout le quartier en parle.", en: "His bread is so good the whole neighbourhood is talking about it." },
+      ] },
+    { title: "Un voyage en train", question: "Pourquoi le voyage a-t-il été long ?", question_answer: "Parce que le train est resté bloqué à cause d'un problème technique.",
+      sentences: [
+        { fr: "La semaine dernière, j'ai pris le train pour Paris.", en: "Last week, I took the train to Paris." },
+        { fr: "Au début, tout allait bien.", en: "At first, everything was fine." },
+        { fr: "Mais le train est resté bloqué une heure à cause d'un problème technique.", en: "But the train was stuck for an hour because of a technical problem." },
+        { fr: "Heureusement, ma voisine de siège était très bavarde et sympathique.", en: "Luckily, the woman next to me was very chatty and friendly." },
+      ] },
+    { title: "La fête des voisins", question: "Qu'est-ce que chacun a apporté ?", question_answer: "Un plat (quelque chose à manger).",
+      sentences: [
+        { fr: "Samedi, on a organisé une fête avec les voisins.", en: "On Saturday, we organised a party with the neighbours." },
+        { fr: "Chacun a apporté un plat de son pays.", en: "Everyone brought a dish from their country." },
+        { fr: "On a goûté des choses qu'on ne connaissait pas du tout.", en: "We tasted things we didn't know at all." },
+        { fr: "On a fini la soirée en chantant dans la cour.", en: "We ended the evening singing in the courtyard." },
+      ] },
+    { title: "Mon premier appartement", question: "Comment était le premier appartement ?", question_answer: "Minuscule (très petit), mais la personne en garde un bon souvenir.",
+      sentences: [
+        { fr: "Quand j'avais vingt ans, j'ai loué mon premier appartement.", en: "When I was twenty, I rented my first flat." },
+        { fr: "Il était minuscule : la cuisine était dans le salon.", en: "It was tiny: the kitchen was in the living room." },
+        { fr: "L'hiver, il faisait froid parce que les fenêtres fermaient mal.", en: "In winter it was cold because the windows didn't close properly." },
+        { fr: "Pourtant, j'en garde un très bon souvenir.", en: "And yet I have very fond memories of it." },
+      ] },
+    { title: "Une mauvaise journée", question: "Qu'est-ce qui s'est passé avec le bus ?", question_answer: "La personne a raté le bus (il est parti juste devant elle).",
+      sentences: [
+        { fr: "Hier, tout est allé de travers.", en: "Yesterday, everything went wrong." },
+        { fr: "Je me suis levée en retard et j'ai raté le bus.", en: "I got up late and missed the bus." },
+        { fr: "Il est parti juste devant moi, évidemment.", en: "It left right in front of me, of course." },
+        { fr: "Le soir, j'ai ri de cette journée avec mon mari.", en: "In the evening, I laughed about the day with my husband." },
+      ] },
+    { title: "Le marché de Noël", question: "Qu'est-ce qu'ils ont bu au marché ?", question_answer: "Du vin chaud.",
+      sentences: [
+        { fr: "En décembre, nous sommes allés au marché de Noël.", en: "In December, we went to the Christmas market." },
+        { fr: "Il y avait des lumières partout et ça sentait la cannelle.", en: "There were lights everywhere and it smelled of cinnamon." },
+        { fr: "On a bu du vin chaud pour se réchauffer.", en: "We drank mulled wine to warm up." },
+        { fr: "J'ai acheté des cadeaux pour toute la famille.", en: "I bought presents for the whole family." },
+      ] },
+    { title: "Un dimanche à la campagne", question: "Qu'est-ce qu'ils ont fait après le déjeuner ?", question_answer: "Ils ont fait une longue promenade dans la forêt.",
+      sentences: [
+        { fr: "Dimanche dernier, des amis nous ont invités à la campagne.", en: "Last Sunday, some friends invited us to the countryside." },
+        { fr: "On a déjeuné dehors, sous un grand arbre.", en: "We had lunch outside, under a big tree." },
+        { fr: "Après le déjeuner, on a fait une longue promenade dans la forêt.", en: "After lunch, we went for a long walk in the forest." },
+        { fr: "On est rentrés fatigués mais heureux.", en: "We came home tired but happy." },
+      ] },
+  ],
+  B1: [
+    { title: "Le télétravail", question: "Quel est l'inconvénient mentionné ?", question_answer: "On se sent parfois isolé.",
+      sentences: [
+        { fr: "Depuis quelques années, le télétravail s'est beaucoup développé.", en: "In recent years, remote work has grown a lot." },
+        { fr: "Beaucoup de gens apprécient de ne plus perdre de temps dans les transports.", en: "Many people appreciate no longer wasting time commuting." },
+        { fr: "Pourtant, certains trouvent qu'on se sent parfois isolé.", en: "However, some find that you sometimes feel isolated." },
+        { fr: "Ce qui compte, c'est de trouver un équilibre qui convient à chacun.", en: "What matters is finding a balance that suits each person." },
+      ] },
+    { title: "Les réseaux sociaux", question: "Quel est le paradoxe évoqué ?", question_answer: "Ils nous connectent au monde entier, mais on parle moins aux gens autour de nous.",
+      sentences: [
+        { fr: "Les réseaux sociaux nous permettent de rester en contact avec le monde entier.", en: "Social media lets us stay in touch with the whole world." },
+        { fr: "Paradoxalement, on parle parfois moins aux gens qui nous entourent.", en: "Paradoxically, we sometimes talk less to the people around us." },
+        { fr: "Certains décident donc de couper leur téléphone le soir.", en: "So some people decide to switch off their phone in the evening." },
+        { fr: "D'après eux, on redécouvre vite le plaisir d'une vraie conversation.", en: "According to them, you quickly rediscover the pleasure of a real conversation." },
+      ] },
+    { title: "Apprendre une langue", question: "Qu'est-ce qui compte plus que le talent, selon le texte ?", question_answer: "La régularité (un peu tous les jours).",
+      sentences: [
+        { fr: "On croit souvent qu'il faut un don pour apprendre une langue.", en: "People often think you need a gift to learn a language." },
+        { fr: "En réalité, la régularité compte beaucoup plus que le talent.", en: "In reality, consistency matters much more than talent." },
+        { fr: "Dix minutes par jour valent mieux que deux heures le dimanche.", en: "Ten minutes a day beats two hours on a Sunday." },
+        { fr: "Et surtout, il ne faut pas avoir peur de faire des erreurs.", en: "Above all, you mustn't be afraid of making mistakes." },
+      ] },
+    { title: "Ville ou campagne ?", question: "Pourquoi certains hésitent-ils à quitter la ville ?", question_answer: "Ils ont peur de s'ennuyer et de perdre leur vie sociale.",
+      sentences: [
+        { fr: "De plus en plus de citadins rêvent de s'installer à la campagne.", en: "More and more city dwellers dream of moving to the countryside." },
+        { fr: "Ils cherchent le calme, l'espace et un air plus pur.", en: "They're looking for calm, space and cleaner air." },
+        { fr: "Mais beaucoup hésitent, par peur de s'ennuyer ou de perdre leur vie sociale.", en: "But many hesitate, fearing boredom or losing their social life." },
+        { fr: "Au fond, l'idéal serait peut-être d'avoir un pied dans chaque monde.", en: "Deep down, the ideal might be to have a foot in each world." },
+      ] },
+    { title: "Le sport après cinquante ans", question: "Que conseillent les médecins ?", question_answer: "Une activité douce et régulière, comme la marche ou la natation.",
+      sentences: [
+        { fr: "On entend souvent qu'il serait trop tard pour se mettre au sport après cinquante ans.", en: "You often hear it's supposedly too late to take up sport after fifty." },
+        { fr: "Les médecins affirment exactement le contraire.", en: "Doctors say exactly the opposite." },
+        { fr: "Ils conseillent une activité douce et régulière, comme la marche ou la natation.", en: "They recommend gentle, regular activity, like walking or swimming." },
+        { fr: "L'essentiel, c'est d'y prendre du plaisir pour continuer longtemps.", en: "The key is to enjoy it so you keep going for a long time." },
+      ] },
+    { title: "Les repas de famille", question: "Pourquoi les repas durent-ils si longtemps en France ?", question_answer: "Parce qu'on discute de tout à table — le repas est un moment social.",
+      sentences: [
+        { fr: "En France, les repas de famille peuvent durer des heures.", en: "In France, family meals can last for hours." },
+        { fr: "Ce n'est pas seulement une question de nourriture.", en: "It's not only about the food." },
+        { fr: "À table, on discute de tout : de politique, des voisins, des souvenirs.", en: "At the table, people discuss everything: politics, the neighbours, memories." },
+        { fr: "Le repas est avant tout un moment passé ensemble.", en: "The meal is above all a moment spent together." },
+      ] },
+    { title: "Voyager autrement", question: "Que propose le texte à la place des grandes villes touristiques ?", question_answer: "Découvrir les petits villages et prendre le temps de rencontrer les habitants.",
+      sentences: [
+        { fr: "Beaucoup de voyageurs visitent toujours les mêmes grandes villes.", en: "Many travellers always visit the same big cities." },
+        { fr: "Pourtant, les petits villages ont souvent plus de charme.", en: "Yet small villages often have more charm." },
+        { fr: "On y prend le temps de discuter avec les habitants.", en: "There, you take the time to chat with the locals." },
+        { fr: "Ce sont souvent ces rencontres dont on se souvient le plus.", en: "It's often those encounters you remember most." },
+      ] },
+  ],
 };
 
 /* --------------------------- fallback exercises ----------------------------- */
 
-const FALLBACK_EXERCISES = {
-  cloze: { type: "cloze", instructions: "Fill the gap.", items: [
+/* Larger per-type pools; each generated fallback drill samples from these. */
+const EXERCISE_POOLS = {
+  cloze: { instructions: "Fill the gap.", perDrill: 3, items: [
     { prompt: "Hier, nous ___ (aller) au cinéma.", answer: "sommes allés", explanation: "'Aller' takes être in the passé composé; nous → sommes allés." },
     { prompt: "Je ___ (vouloir) un café, s'il vous plaît.", answer: "voudrais", explanation: "Polite requests use the conditional: je voudrais." },
+    { prompt: "Quand j'étais petite, je ___ (jouer) dans le jardin.", answer: "jouais", explanation: "Habitual past → imparfait: je jouais." },
+    { prompt: "Elle ___ (être) très fatiguée hier soir.", answer: "était", explanation: "A state/description in the past → imparfait: elle était." },
+    { prompt: "Demain, il ___ (faire) beau sur toute la France.", answer: "fera", explanation: "Weather prediction → futur simple: il fera." },
+    { prompt: "Nous ___ (avoir) deux enfants et un chat.", answer: "avons", explanation: "Present of avoir: nous avons." },
+    { prompt: "Tu ___ (pouvoir) m'aider, s'il te plaît ?", answer: "peux", explanation: "Present of pouvoir: tu peux." },
+    { prompt: "Ils ne ___ (comprendre) pas la question.", answer: "comprennent", explanation: "Present of comprendre: ils comprennent." },
   ]},
-  translation: { type: "translation", instructions: "Translate into French.", items: [
+  translation: { instructions: "Translate into French.", perDrill: 3, items: [
     { prompt: "I don't know where the station is.", answer: "je ne sais pas où est la gare", explanation: "Je ne sais pas + où est…" },
     { prompt: "We are going to eat at eight.", answer: "on va manger à huit heures", explanation: "Futur proche: aller + infinitive." },
+    { prompt: "She left this morning.", answer: "elle est partie ce matin", explanation: "'Partir' takes être; the participle agrees: partie." },
+    { prompt: "I see them every day.", answer: "je les vois tous les jours", explanation: "Object pronoun before the verb: je les vois." },
+    { prompt: "It was raining when we arrived.", answer: "il pleuvait quand nous sommes arrivés", explanation: "Background action → imparfait; the arrival → passé composé." },
+    { prompt: "Can you help me, please?", answer: "pouvez-vous m'aider, s'il vous plaît", explanation: "Polite request with inversion: pouvez-vous + m'aider." },
+    { prompt: "There are too many people here.", answer: "il y a trop de monde ici", explanation: "'Trop de monde' = too many people; 'il y a' introduces it." },
+    { prompt: "We used to live in a small village.", answer: "nous habitions dans un petit village", explanation: "'Used to' → imparfait: nous habitions." },
   ]},
-  dictation: { type: "dictation", instructions: "Type exactly what you hear.", items: [
+  dictation: { instructions: "Type exactly what you hear.", perDrill: 2, items: [
     { prompt: "Écoutez puis écrivez.", answer: "Il y a beaucoup de monde dans les rues ce soir.", explanation: "'Il y a' collapses to 'ya'; 'dans les' links smoothly — listen for the rhythm, not the words." },
+    { prompt: "Écoutez puis écrivez.", answer: "Mes amis arrivent à deux heures et demie.", explanation: "Liaisons everywhere: mes‿amis, deux‿heures — the Z sounds are the word boundaries." },
+    { prompt: "Écoutez puis écrivez.", answer: "On est allés en Italie avec des amis.", explanation: "'On est allés' chains into o-nay-ta-lay; 'des amis' → day-za-mee." },
+    { prompt: "Écoutez puis écrivez.", answer: "Je ne sais pas s'il va venir ce soir.", explanation: "'Je ne sais pas' shrinks toward 'ché pa'; s'il = si + il elided." },
+    { prompt: "Écoutez puis écrivez.", answer: "Elle a acheté un petit appartement en ville.", explanation: "petit‿appartement links t to the vowel: puh-tee-ta-par-tuh-mahn." },
+    { prompt: "Écoutez puis écrivez.", answer: "Nous avons attendu le bus pendant une heure.", explanation: "nous‿avons‿attendu is one smooth ribbon — three words, no gaps." },
   ]},
-  reorder: { type: "reorder", instructions: "Rebuild the sentence.", items: [
+  reorder: { instructions: "Rebuild the sentence.", perDrill: 3, items: [
     { prompt: "Put the words in order:", answer: "je les vois souvent le week-end", words: ["je", "les", "vois", "souvent", "le", "week-end"], explanation: "Object pronoun 'les' goes BEFORE the verb: je les vois." },
+    { prompt: "Put the words in order:", answer: "elle ne mange pas de viande", words: ["elle", "ne", "mange", "pas", "de", "viande"], explanation: "Negation wraps the verb: ne … pas, and 'de' replaces 'la' after a negative." },
+    { prompt: "Put the words in order:", answer: "nous allons partir demain matin", words: ["nous", "allons", "partir", "demain", "matin"], explanation: "Futur proche: aller conjugated + infinitive, time phrase at the end." },
+    { prompt: "Put the words in order:", answer: "est-ce que tu as vu mes clés", words: ["est-ce", "que", "tu", "as", "vu", "mes", "clés"], explanation: "Est-ce que + normal word order turns a statement into a question." },
+    { prompt: "Put the words in order:", answer: "il lui a donné un cadeau", words: ["il", "lui", "a", "donné", "un", "cadeau"], explanation: "Indirect pronoun 'lui' sits before the auxiliary: il lui a donné." },
+    { prompt: "Put the words in order:", answer: "on y va tous les étés", words: ["on", "y", "va", "tous", "les", "étés"], explanation: "'y' (= there) goes before the verb: on y va." },
   ]},
 };
+
+function fallbackExercise(type) {
+  const pool = EXERCISE_POOLS[type] || EXERCISE_POOLS.cloze;
+  return { type, instructions: pool.instructions, items: shuffle(pool.items).slice(0, pool.perDrill) };
+}
 
 /* ------------------------------ AI prompt builders -------------------------- */
 
@@ -1653,7 +2050,63 @@ function Dashboard({ u, partner, go }) {
 /*  SETTINGS                                                                  */
 /* ========================================================================== */
 
-function Settings({ u, setU, go, onRerunPlacement, onSwitch }) {
+/* Device-level AI engine config: an Anthropic API key used directly from
+   this browser, or a personal proxy URL (see cloudflare-worker.js). Without
+   either, every AI feature falls back to the built-in offline bank. */
+function AiEngine({ aiCfg, onSave }) {
+  const [key, setKey] = useState(aiCfg.key || "");
+  const [url, setUrl] = useState(aiCfg.url || "");
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState(null);
+  const dirty = key.trim() !== (aiCfg.key || "") || url.trim() !== (aiCfg.url || "");
+
+  const test = async () => {
+    setTesting(true); setResult(null);
+    await onSave({ key, url });
+    const res = await aiJSON("You are a connection test.", 'Return exactly {"ok": true}', null, 50);
+    setResult(res && res.ok === true ? "ok" : "fail");
+    setTesting(false);
+  };
+
+  return (
+    <Card className="p-5 mb-4">
+      <div className="flex items-center justify-between mb-1">
+        <div className="font-semibold text-stone-800">AI content engine</div>
+        <Chip tone={aiConfigured() ? "green" : "stone"}>{aiConfigured() ? "configured" : "built-in content only"}</Chip>
+      </div>
+      <p className="text-xs text-stone-500 mb-3">
+        Unlocks unlimited fresh clips, passages, drills and free conversation. Without it, Deux runs on its built-in offline bank (still fully functional).
+      </p>
+      <label className="block text-sm font-medium text-stone-700 mb-1">Anthropic API key</label>
+      <input
+        type="password" value={key} onChange={(e) => { setKey(e.target.value); setResult(null); }}
+        placeholder="sk-ant-…" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+        className="w-full rounded-2xl border border-stone-300 px-4 py-3 bg-white mb-1"
+      />
+      <div className="text-xs text-stone-500 mb-3">
+        Stored only on this device and sent only to Anthropic. Get one at console.anthropic.com — usage is pay-as-you-go (typical heavy daily use costs pennies). Never share this device's browser profile with the key saved.
+      </div>
+      <label className="block text-sm font-medium text-stone-700 mb-1">Or: personal proxy URL (advanced)</label>
+      <input
+        type="url" value={url} onChange={(e) => { setUrl(e.target.value); setResult(null); }}
+        placeholder="https://deux-ai.yourname.workers.dev" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+        className="w-full rounded-2xl border border-stone-300 px-4 py-3 bg-white mb-1"
+      />
+      <div className="text-xs text-stone-500 mb-3">
+        Keeps the key off the device entirely — deploy the ready-made Cloudflare Worker from the repo (cloudflare-worker.js) and paste its URL here. If set, it takes priority over the key field.
+      </div>
+      <div className="flex gap-2 items-center flex-wrap">
+        <Btn small onClick={() => { onSave({ key, url }); setResult(null); }} disabled={!dirty}>Save</Btn>
+        <Btn small variant="secondary" onClick={test} disabled={testing || (!key.trim() && !url.trim())}>{testing ? "Testing…" : "Save & test"}</Btn>
+        {(key || url) && <Btn small variant="ghost" onClick={() => { setKey(""); setUrl(""); onSave({ key: "", url: "" }); setResult(null); }}>Clear</Btn>}
+        {result === "ok" && <Chip tone="green">✓ connected — AI content is live</Chip>}
+        {result === "fail" && <Chip tone="red">✗ couldn't reach the AI — check the key/URL</Chip>}
+      </div>
+    </Card>
+  );
+}
+
+function Settings({ u, setU, go, onRerunPlacement, onSwitch, aiCfg, onSaveAi }) {
   const set = (patch) => setU((prev) => ({ ...prev, settings: { ...prev.settings, ...patch } }));
   const Row = ({ label, children, hint }) => (
     <div className="py-3 border-b border-stone-100 last:border-0">
@@ -1701,6 +2154,7 @@ function Settings({ u, setU, go, onRerunPlacement, onSwitch }) {
           <Seg value={u.settings.shareProgress ? "on" : "off"} options={["on", "off"]} onPick={(v) => set({ shareProgress: v === "on" })} />
         </Row>
       </Card>
+      <AiEngine aiCfg={aiCfg || { key: "", url: "" }} onSave={onSaveAi} />
       <Card className="px-5 py-2 mb-4">
         <Row label="Re-run placement check" hint="Re-assesses your level and recommended track.">
           <Btn variant="secondary" small onClick={onRerunPlacement}>Re-run</Btn>
@@ -2290,7 +2744,7 @@ function Library({ u, setU, go }) {
 
   const generate = async () => {
     setBusy(true); setPassage(null); setQDone(false); setQAnswer("");
-    const fb = FALLBACK_PASSAGES[levelKey] || FALLBACK_PASSAGES.A1;
+    const fb = pick(FALLBACK_PASSAGES[levelKey] || FALLBACK_PASSAGES.A1);
     const res = await aiJSON(SYS.passage(u.level, topic), "Write the passage now.", null);
     const ok = res && Array.isArray(res.sentences) && res.sentences.length >= 3 && res.sentences.every((s) => s && s.fr);
     setPassage(ok ? res : fb);
@@ -2703,7 +3157,7 @@ function ExerciseGen({ u, setU, go }) {
 
   const generate = async () => {
     setBusy(true); setEx(null); setIdx(0); setScore(0); setVerdict(null); setAnswer("");
-    const fb = FALLBACK_EXERCISES[type] || FALLBACK_EXERCISES.cloze;
+    const fb = fallbackExercise(type);
     const res = await aiJSON(SYS.exercise(focusDesc(), type, u.level), "Generate the drill now.", null);
     const ok = res && Array.isArray(res.items) && res.items.length > 0 && res.items.every((x) => x && x.prompt !== undefined && x.answer);
     const chosen = ok ? res : fb;
@@ -2907,11 +3361,13 @@ function ListeningTrainer({ u, setU, go }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const fb = FALLBACK_CLIPS[rung.rung];
+      const fb = pick(FALLBACK_CLIPS[rung.rung]);
       const res = await aiJSON(SYS.clip(rung), "Write the clip now.", null);
       const ok = res && res.text && tokenize(res.text).length >= 12;
       if (!alive) return;
-      setClip(ok ? res : fb);
+      const chosen = ok ? res : fb;
+      try { window.__deuxClip = chosen.text; } catch (e) { /* test/debug hook only */ }
+      setClip(chosen);
       setPhase("listen");
     })();
     return () => { alive = false; stopSpeaking(); };
@@ -3280,15 +3736,15 @@ function GrammarDrills({ u, setU, go }) {
       if (res && Array.isArray(res.items) && res.items.length >= 4) {
         drillItems = res.items.map((it) => ({ type: it.options && it.options.length ? "mcq" : "type", ...it }));
       } else {
-        const poolAll = [topic, ...partners].flatMap((x) => x.fallback);
-        drillItems = [...poolAll].sort(() => Math.random() - 0.5).slice(0, 6);
+        const poolAll = [topic, ...partners].flatMap((x) => topicPool(x));
+        drillItems = shuffle(poolAll).slice(0, 6);
       }
     } else {
       const res = await aiJSON(SYS.exercise(`BLOCKED practice of one structure only: ${topic.name}. ${topic.hint}`, "cloze", u.level), "Generate 4 items with {\"options\": [..]} per item where multiple-choice fits.", null, 1000);
       if (res && Array.isArray(res.items) && res.items.length >= 3) {
         drillItems = res.items.map((it) => ({ type: it.options && it.options.length ? "mcq" : "type", ...it }));
       } else {
-        drillItems = topic.fallback;
+        drillItems = shuffle(topicPool(topic)).slice(0, 6);
       }
     }
     setItems(drillItems.map((it) => (it.options && it.options.length ? { ...it, options: shuffle(it.options) } : it)));
@@ -3491,7 +3947,15 @@ export default function DeuxApp() {
   const [view, setView] = useState("picker");
   const [params, setParams] = useState({});
   const [ready, setReady] = useState(false);
+  const [aiCfg, setAiCfg] = useState({ key: "", url: "" });
   const saveTimer = useRef(null);
+
+  const onSaveAi = useCallback(async (cfg) => {
+    const clean = { key: (cfg.key || "").trim(), url: (cfg.url || "").trim() };
+    setAiCfg(clean);
+    setAiConfig(clean);
+    try { await store.set("deux:ai", clean); } catch (e) { /* memory copy holds */ }
+  }, []);
 
   /* boot: load or seed the two household profiles */
   useEffect(() => {
@@ -3507,7 +3971,9 @@ export default function DeuxApp() {
         }
         const loaded = {};
         for (const id of index) loaded[id] = await loadProfile(id);
+        const ai = await store.get("deux:ai");
         if (!alive) return;
+        if (ai && (ai.key || ai.url)) { setAiConfig(ai); setAiCfg({ key: ai.key || "", url: ai.url || "" }); }
         setUsers(loaded);
         setOrder(index);
       } catch (e) {
@@ -3599,7 +4065,7 @@ export default function DeuxApp() {
       case "home": return <Home u={u} setU={setU} go={go} />;
       case "review": return <SRSReview key={params.quickWin ? "qw" : "full"} u={u} setU={setU} go={go} quickWin={!!params.quickWin} />;
       case "dashboard": return <Dashboard u={u} partner={partner} go={go} />;
-      case "settings": return <Settings u={u} setU={setU} go={go} onRerunPlacement={() => go("placement")} onSwitch={onSwitch} />;
+      case "settings": return <Settings u={u} setU={setU} go={go} onRerunPlacement={() => go("placement")} onSwitch={onSwitch} aiCfg={aiCfg} onSaveAi={onSaveAi} />;
       case "units": return <UnitList u={u} go={go} />;
       case "unit": return <UnitView key={params.unitId} u={u} setU={setU} go={go} unitId={params.unitId} />;
       case "phonics": return <Phonics u={u} setU={setU} go={go} lessonId={params.lessonId} />;
