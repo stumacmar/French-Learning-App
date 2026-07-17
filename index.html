@@ -4,48 +4,87 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#f5f5f4" />
   <title>Deux — French for two</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.3.1",
-        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client"
-      }
-    }
-  </script>
-  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <!-- Fully self-contained: prebuilt bundle + static CSS, no CDNs.
+       Rebuild after editing deux.jsx:
+         npx esbuild deux.jsx --bundle --minify --loader:.jsx=jsx --format=esm --outfile=app.bundle.js
+         npx tailwindcss -i tw.in.css -o app.css --minify   (content: ["./deux.jsx"]) -->
+  <link rel="stylesheet" href="./app.css" />
   <style>
     body { margin: 0; background: #f5f5f4; }
+    #deux-boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: #f5f5f4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #deux-boot .logo { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 44px; font-weight: 700; color: #1c1917; letter-spacing: -0.01em; }
+    #deux-boot .logo span { color: #f43f5e; }
+    #deux-boot .spin { width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid #d6d3d1; border-top-color: #f43f5e; animation: deuxspin 0.8s linear infinite; }
+    #deux-boot .hint { font-size: 13px; color: #a8a29e; }
+    @keyframes deuxspin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
+  <!-- visible immediately, removed by the app on mount -->
+  <div id="deux-boot">
+    <div class="logo">Deux<span>.</span></div>
+    <div class="spin"></div>
+    <div class="hint">Chargement…</div>
+  </div>
+
   <div id="deux-root"></div>
 
   <!--
-    Dev-harness storage shim. The production environment provides a real
-    async window.storage KV API; here we mirror the same async contract with
-    an in-memory map (the app itself never touches localStorage, per spec).
-    Progress persists for the tab's lifetime in this harness.
+    window.storage shim for standalone hosting (e.g. GitHub Pages).
+    Mirrors the async KV contract of the production environment. Backed by
+    localStorage HERE so Stuart's and Carol's progress survives refreshes;
+    the app itself (deux.jsx) only ever talks to the async window.storage
+    API and never touches localStorage directly. Falls back to in-memory
+    when localStorage is unavailable (private browsing quirks, etc.).
   -->
   <script>
     (function () {
       if (window.storage) return;
       var mem = {};
+      var canLS = false;
+      try { localStorage.setItem("__deux_t", "1"); localStorage.removeItem("__deux_t"); canLS = true; } catch (e) {}
+      var PFX = "deux::";
       window.storage = {
-        get: function (k) { return Promise.resolve(k in mem ? mem[k] : null); },
-        set: function (k, v) { mem[k] = v; return Promise.resolve(); },
-        delete: function (k) { delete mem[k]; return Promise.resolve(); },
+        get: function (k) {
+          if (canLS) { try { var v = localStorage.getItem(PFX + k); return Promise.resolve(v === null ? null : v); } catch (e) {} }
+          return Promise.resolve(k in mem ? mem[k] : null);
+        },
+        set: function (k, v) {
+          mem[k] = v;
+          if (canLS) { try { localStorage.setItem(PFX + k, v); } catch (e) {} }
+          return Promise.resolve();
+        },
+        delete: function (k) {
+          delete mem[k];
+          if (canLS) { try { localStorage.removeItem(PFX + k); } catch (e) {} }
+          return Promise.resolve();
+        },
         list: function (prefix) {
-          return Promise.resolve(Object.keys(mem).filter(function (k) { return !prefix || k.indexOf(prefix) === 0; }));
+          var keys = [];
+          if (canLS) {
+            try { for (var i = 0; i < localStorage.length; i++) { var key = localStorage.key(i); if (key && key.indexOf(PFX) === 0) keys.push(key.slice(PFX.length)); } } catch (e) { keys = Object.keys(mem); }
+          } else keys = Object.keys(mem);
+          return Promise.resolve(keys.filter(function (k) { return !prefix || k.indexOf(prefix) === 0; }));
         },
       };
+      // remove the boot screen once the app has painted (or explain if it can't)
+      var boot = function () {
+        var el = document.getElementById("deux-boot");
+        if (!el) return;
+        if (document.getElementById("deux-root").childElementCount > 0) { el.remove(); return; }
+        setTimeout(boot, 200);
+      };
+      window.addEventListener("load", function () {
+        boot();
+        setTimeout(function () {
+          var el = document.getElementById("deux-boot");
+          if (el) el.querySelector(".hint").textContent = "Still loading — this browser may be too old for the app (needs ES-module support).";
+        }, 12000);
+      });
     })();
   </script>
-
-  <!-- Babel transpiles the JSX and injects it as a native ES module, so the
-       import map above resolves "react" / "react-dom/client". Serve over
-       http (e.g. `python3 -m http.server`) — file:// blocks the fetch. -->
-  <script type="text/babel" data-type="module" data-presets="react" src="./deux.jsx"></script>
+  <script type="module" src="./app.bundle.js"></script>
 </body>
 </html>
